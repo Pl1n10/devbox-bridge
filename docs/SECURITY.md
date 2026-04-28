@@ -53,6 +53,50 @@ satura il bucket di un token valido. Razionale:
   la mette **Cloudflare Access** davanti al tunnel, non in-app.
 - Lasciare il bucket in-app vulnerabile a "auth-spam DoS" sarebbe un buco logico.
 
+## Strategia deny list (security/commands.py)
+
+La validazione comandi usa **due strategie distinte** in cascata, scelte in
+base alla forma del comando:
+
+### Tokenize-and-check (per comandi multi-argomento)
+
+Per `rm`, `chown`, `chmod`, `dd`, `mv`, `kill`, `mkfs.*` la stringa viene
+prima tokenizzata via `shlex.split()` e poi gli argomenti vengono ispezionati
+posizionalmente. Questo è l'unico modo CORRETTO di validare comandi dove i
+flag possono apparire in qualsiasi posizione e i path target possono essere
+multipli.
+
+**Esempi che un singolo regex monolitico NON catturerebbe** ma il
+tokenize-and-check sì:
+
+- `rm -rf / --verbose` (flag dopo path)
+- `rm -rf / /tmp/foo` (path multipli, `/` non in coda)
+- `rm -rf /etc`, `rm -rf /usr`, `rm -rf /boot`, `rm -rf /sys`, `rm -rf /proc`
+- `chown -R user /etc --verbose` (flag dopo path)
+- `dd if=x of=/etc/passwd`, `dd of=/boot/vmlinuz` (target di sistema non `/dev/`)
+- `mv / /tmp/x`, `mv /home/projects /dev/null`
+
+### Regex search (per costrutti sintatticamente fissi)
+
+Per fork bomb, `curl|sh`, `wget|python`, redirect verso path di sistema,
+`shutdown`/`reboot`/`poweroff`/`halt`/`init 0|6`/`systemctl poweroff|reboot|halt|emergency|rescue`
+si usa `re.search()` sulla stringa intera. Questi costrutti hanno una forma
+sintattica fissa per cui un singolo regex è sufficiente e robusto.
+
+**Defense-in-depth note:** alcuni di questi pattern (curl|sh, redirect a path
+di sistema) sono RIDONDANTI con il modello di esecuzione attuale
+(`subprocess.run(shell=False)` rende `|` e `>` argomenti letterali). Sono
+mantenuti come strato di protezione contro futuri regression che potrebbero
+reintrodurre `shell=True`.
+
+### Whitelist (per progetto)
+
+Dopo la deny list, il comando deve matchare almeno un pattern in
+`projects[<name>].command_whitelist` via `re.fullmatch` (anchor implicito).
+Senza whitelist o senza match → reject. Questo impedisce ad esempio che
+`pytest && rm -rf /` matchi un pattern `pytest` (perché fullmatch verifica
+l'intera stringa).
+
 ## env_passthrough — deroga esplicita alla whitelist
 
 `env_passthrough` (in `config.yaml` per progetto) è una **deroga esplicita** alla
