@@ -1,16 +1,88 @@
 """Path traversal guard.
 
-TODO (step 4):
-  - resolve_within(project_root: Path, candidate: str | Path) -> Path
-    risolve il candidato e raise PathSecurityError se cade fuori da project_root
-    (test esplicito per: '..', symlink che escono, path assoluti maliziosi).
-  - resolve_project_path(config: AppConfig, project: str, path: str) -> Path
-    prende il root dal config e applica resolve_within.
+Ogni accesso a filesystem dei tool MCP DEVE passare per resolve_project_path()
+o resolve_within(). Questi sono gli unici due punti di ingresso autorizzati.
+
+Threat model:
+  - Path traversal classico: '..', '../../etc/passwd'
+  - Path assoluti maliziosi: '/etc/passwd' come arg di read_file
+  - Symlink che escono: <progetto>/link → /etc → traversal silenzioso
+
+Limiti noti:
+  - Mount point bind: out of scope (assumiamo che il filesystem sotto il
+    progetto non contenga symlink/bind che il sysadmin non abbia autorizzato).
+  - TOCTOU (time-of-check vs time-of-use): tra il resolve_within() e l'uso
+    effettivo del path da parte del tool chiamante (open, mkdir, ecc.) c'è
+    una finestra in cui un symlink può essere creato/modificato per
+    redirigere altrove. Esempio: resolve_within ritorna <root>/foo/bar.txt
+    con `foo` non esistente; tra il return e la open() un attaccante crea
+    `foo` come symlink a /tmp → la write finisce in /tmp/bar.txt.
+    Mitigazione completa richiederebbe openat() con RESOLVE_BENEATH
+    (Linux 5.6+) o equivalente. Trattato come accettabile per il threat
+    model attuale perché:
+      - Il filesystem dei progetti è single-tenant (utente hypn0).
+      - Nessun altro utente non-root può creare symlink dentro i progetti.
+      - I subprocess dei tool sono lanciati con env sanitizzato (niente
+        LD_PRELOAD/LD_LIBRARY_PATH).
 """
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from devbox_bridge.config import AppConfig
 
 
 class PathSecurityError(ValueError):
     """Tentativo di accedere a un path fuori dalla whitelist progetti."""
 
 
-# placeholder — implementazione nello step 4
+def resolve_within(project_root: Path, candidate: str | Path) -> Path:
+    """Risolve `candidate` (relativo a project_root o assoluto) e verifica che
+    cada DENTRO project_root. Solleva PathSecurityError altrimenti.
+
+    Implementazione:
+      - project_root viene .resolve(strict=True) → segue symlink, fallisce se
+        la directory non esiste (vogliamo questo: errore esplicito).
+      - candidate, se relativo, viene joinato a project_root PRIMA del resolve.
+      - Il resolve segue tutti i symlink esistenti → simulazioni
+        '<proj>/link → /etc' vengono rilevate e bloccate.
+      - Verifica via relative_to() con try/except per messaggio chiaro.
+    """
+    try:
+        root_resolved = Path(project_root).resolve(strict=True)
+    except FileNotFoundError as e:
+        raise PathSecurityError(
+            f"project_root '{project_root}' non esiste o non è accessibile"
+        ) from e
+
+    cand = Path(candidate)
+    if cand.is_absolute():
+        target = cand
+    else:
+        target = root_resolved / cand
+
+    # strict=False: non richiediamo che il file di destinazione esista
+    # (write_file su nuovo file). Symlink intermedi che esistono vengono
+    # comunque seguiti e validati dal resolve.
+    target_resolved = target.resolve(strict=False)
+
+    try:
+        target_resolved.relative_to(root_resolved)
+    except ValueError as e:
+        raise PathSecurityError(
+            f"path '{candidate}' esce dalla project root '{project_root}' "
+            f"(risolto a '{target_resolved}')"
+        ) from e
+
+    return target_resolved
+
+
+def resolve_project_path(config: AppConfig, project: str, path: str | Path) -> Path:
+    """Convenience: prende il root dal config e applica resolve_within.
+
+    Solleva ConfigError se il progetto non esiste in config; PathSecurityError
+    se il path esce dal root.
+    """
+    proj = config.project(project)
+    return resolve_within(proj.path, path)

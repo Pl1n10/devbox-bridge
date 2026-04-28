@@ -53,6 +53,25 @@ satura il bucket di un token valido. Razionale:
   la mette **Cloudflare Access** davanti al tunnel, non in-app.
 - Lasciare il bucket in-app vulnerabile a "auth-spam DoS" sarebbe un buco logico.
 
+## env_passthrough — deroga esplicita alla whitelist
+
+`env_passthrough` (in `config.yaml` per progetto) è una **deroga esplicita** alla
+policy di whitelist di `security/env.sanitize_env()`.
+
+In whitelist mode, di default solo le variabili infrastrutturali (`PATH`,
+`HOME`, `USER`, `LANG`, `LC_*`, ecc.) vengono propagate al subprocess. Tutto il
+resto, incluso `LD_PRELOAD`, `PYTHONPATH`, `*_TOKEN`, `*_KEY`, `*_SECRET`,
+`AWS_*` e qualsiasi altra variabile non riconosciuta, viene **droppato**.
+
+Se metti `GITHUB_TOKEN` in `env_passthrough`, sai che stai esponendo quella
+secret ai comandi del progetto. Usalo solo dove necessario (es. CI script che
+pusha tag autenticato, test che parlano con un'API esterna sandbox).
+
+**Audit:** ogni variabile in `env_passthrough` che matcha un `_SECRET_PATTERNS`
+viene loggata come warning `env.passthrough.secret_match` con il nome della
+var. Il passthrough resta valido — il warning serve solo a tracciare l'uso di
+una deroga per review futura.
+
 ## Progetti two-key — EvoTrader e Robo-PAC ETF
 
 Questi due progetti hanno guardrail finanziari nel global context e richiedono una
