@@ -148,6 +148,17 @@ def test_deny_rm_rf_sys() -> None:
         check_command("rm -rf /sys", [r".*"])
 
 
+def test_deny_rm_rf_opt() -> None:
+    """/opt contiene vendor software critico (es. NVIDIA drivers)."""
+    with pytest.raises(CommandRejectedError, match="deny list"):
+        check_command("rm -rf /opt", [r".*"])
+
+
+def test_deny_redirect_to_opt() -> None:
+    with pytest.raises(CommandRejectedError, match="deny list"):
+        check_command("echo x > /opt/nvidia/lib", [r".*"])
+
+
 def test_deny_rm_capital_R_recursive() -> None:
     """rm con -R maiuscolo (alias di -r) deve essere bloccato uguale."""
     with pytest.raises(CommandRejectedError, match="deny list"):

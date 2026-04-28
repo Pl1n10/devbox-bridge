@@ -54,6 +54,7 @@ _DANGER_PATHS: frozenset[str] = frozenset({
     "/lib64",
     "/sbin",
     "/bin",
+    "/opt",
 })
 
 # Prefissi path di sistema usati da dd of= e da redirect (>) check.
@@ -70,6 +71,7 @@ _DANGER_PATH_PREFIXES: tuple[str, ...] = (
     "/lib64/",
     "/sbin/",
     "/bin/",
+    "/opt/",
 )
 
 
@@ -197,7 +199,7 @@ _DENY_REGEX: list[tuple[re.Pattern[str], str]] = [
     # Redirect verso path di sistema. Ridondante con shell=False
     # (> diventa arg letterale), defense-in-depth.
     (
-        re.compile(r">\s*/(dev|etc|boot|usr|var|root|sys|proc|lib|lib64|sbin|bin)/"),
+        re.compile(r">\s*/(dev|etc|boot|usr|var|root|sys|proc|lib|lib64|sbin|bin|opt)/"),
         "redirect a path di sistema",
     ),
     # Power management.
