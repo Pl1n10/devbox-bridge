@@ -80,6 +80,7 @@ SecretStorage==3.5.0
 sse-starlette==3.4.1
 starlette==1.0.0
 structlog==25.5.0
+types-PyYAML==6.0.12.20260408
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uncalled-for==0.3.1

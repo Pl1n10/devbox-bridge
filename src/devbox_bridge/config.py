@@ -1,13 +1,169 @@
-"""Caricamento e validazione di config.yaml.
+"""Caricamento e validazione di config.yaml."""
 
-TODO (step 2): definire i pydantic model:
-  - ServerConfig(bind, log_level, log_dir)
-  - AuthConfig(token_hash_file)
-  - ProjectConfig(path, write_enabled, allow_push,
-                  test_command, lint_command, build_command,
-                  command_whitelist: list[str], env_passthrough: list[str])
-  - AppConfig(server, auth, projects: dict[str, ProjectConfig])
-e una funzione `load_config(path: Path) -> AppConfig` che valida (path esistente, ecc.).
-"""
+from __future__ import annotations
 
-# placeholder — implementazione nello step 2
+import re
+from pathlib import Path
+from typing import Annotated
+
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+
+class ConfigError(ValueError):
+    """Errore di validazione/caricamento di config.yaml."""
+
+
+# Nome progetto: solo [a-z0-9-], 1..64 char. Usato come chiave di routing nei tool MCP.
+ProjectName = Annotated[
+    str,
+    StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$"),
+]
+
+
+def _require_absolute(v: Path, field: str) -> Path:
+    """Richiede path assoluto; espande ~ ma non risolve symlink (lo fa security/paths.py)."""
+    expanded = Path(v).expanduser()
+    if not expanded.is_absolute():
+        raise ValueError(f"{field} '{v}' deve essere assoluto")
+    return expanded
+
+
+class ServerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bind: str = Field(default="127.0.0.1:8765")
+    log_level: str = Field(default="INFO")
+    log_dir: Path = Field(default=Path("/var/log/devbox-bridge"))
+
+    @field_validator("bind")
+    @classmethod
+    def _validate_bind(cls, v: str) -> str:
+        m = re.fullmatch(r"(?P<host>[^:]+):(?P<port>\d+)", v)
+        if not m or not (1 <= int(m["port"]) <= 65535):
+            raise ValueError(f"server.bind '{v}' non è host:port valido")
+        return v
+
+    @field_validator("log_level")
+    @classmethod
+    def _validate_log_level(cls, v: str) -> str:
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if v.upper() not in allowed:
+            raise ValueError(f"server.log_level '{v}' non in {sorted(allowed)}")
+        return v.upper()
+
+    @field_validator("log_dir")
+    @classmethod
+    def _log_dir_absolute(cls, v: Path) -> Path:
+        return _require_absolute(v, "server.log_dir")
+
+
+class AuthConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token_hash_file: Path
+
+
+class ProjectConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: Path
+    write_enabled: bool = False
+    allow_push: bool = False
+    test_command: str | None = None
+    lint_command: str | None = None
+    build_command: str | None = None
+    command_whitelist: list[str] = Field(default_factory=list)
+    env_passthrough: list[str] = Field(default_factory=list)
+
+    @field_validator("path")
+    @classmethod
+    def _path_absolute(cls, v: Path) -> Path:
+        return _require_absolute(v, "projects[].path")
+
+    @field_validator("command_whitelist")
+    @classmethod
+    def _whitelist_is_compilable(cls, v: list[str]) -> list[str]:
+        for pattern in v:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                raise ValueError(f"pattern whitelist '{pattern}' non compila: {e}") from e
+        return v
+
+    @field_validator("env_passthrough")
+    @classmethod
+    def _env_names_valid(cls, v: list[str]) -> list[str]:
+        for name in v:
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name):
+                raise ValueError(
+                    f"env_passthrough '{name}' non è un nome variabile env valido "
+                    "(maiuscolo, underscore, no minuscole)"
+                )
+        return v
+
+    @model_validator(mode="after")
+    def _allow_push_requires_write(self) -> ProjectConfig:
+        if self.allow_push and not self.write_enabled:
+            raise ValueError(
+                "allow_push=true richiede write_enabled=true "
+                "(non puoi pushare senza poter scrivere)"
+            )
+        return self
+
+
+class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    server: ServerConfig = Field(default_factory=ServerConfig)
+    auth: AuthConfig
+    projects: dict[ProjectName, ProjectConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _projects_have_unique_paths(self) -> AppConfig:
+        seen: dict[str, str] = {}
+        for name, proj in self.projects.items():
+            key = str(proj.path)
+            if key in seen:
+                raise ValueError(
+                    f"projects '{name}' e '{seen[key]}' puntano allo stesso path '{key}'"
+                )
+            seen[key] = name
+        return self
+
+    def project(self, name: str) -> ProjectConfig:
+        try:
+            return self.projects[name]
+        except KeyError as e:
+            raise ConfigError(f"progetto '{name}' non in config") from e
+
+
+def load_config(path: str | Path) -> AppConfig:
+    """Carica e valida il file YAML di config.
+
+    Errori sollevati come ConfigError con messaggio leggibile.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise ConfigError(f"config file '{p}' non trovato")
+    try:
+        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ConfigError(f"YAML non valido in '{p}': {e}") from e
+    if raw is None:
+        raise ConfigError(f"config file '{p}' è vuoto")
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"config file '{p}' deve avere un dict alla root, ho '{type(raw).__name__}'"
+        )
+    try:
+        return AppConfig.model_validate(raw)
+    except Exception as e:
+        raise ConfigError(f"validazione fallita per '{p}': {e}") from e
