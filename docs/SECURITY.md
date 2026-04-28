@@ -53,6 +53,94 @@ satura il bucket di un token valido. Razionale:
   la mette **Cloudflare Access** davanti al tunnel, non in-app.
 - Lasciare il bucket in-app vulnerabile a "auth-spam DoS" sarebbe un buco logico.
 
+## Audit logging
+
+Ogni azione write/exec, ogni fallimento di auth e ogni reject di sicurezza
+viene loggato in `<log_dir>/audit/audit.log` (JSON Lines, un evento per riga).
+
+### Schema fisso
+
+Ogni linea ha lo stesso set di campi (alcuni `null` se non applicabili):
+
+```json
+{
+  "timestamp": "2026-04-28T14:23:45.123Z",
+  "event": "tool.write_file",
+  "outcome": "success",
+  "token_id": "a1b2c3d4",
+  "client_ip": "100.64.x.x",
+  "project": "sidebiz-agent",
+  "tool": "write_file",
+  "args_summary": {"path": "src/foo.py", "bytes": 1234, "content_sha8": "deadbeef"},
+  "duration_ms": 42.0,
+  "error_class": null,
+  "error_message": null
+}
+```
+
+`outcome ∈ {success, denied, error}`. Schema fisso = grep-able, parsabile,
+alerting facile.
+
+### Eventi auditati
+
+Sempre loggati:
+  - `auth.failed`, `auth.rate_limited`
+  - `command.rejected`, `path.rejected`
+  - Tutti i tool write/exec: `tool.write_file`, `tool.apply_patch`,
+    `tool.git_commit`, `tool.git_push`, `tool.git_create_branch`,
+    `tool.run_command`, `tool.run_tests`, `tool.run_lint`, `tool.run_build`
+
+Loggati solo se `audit.audit_reads: true` in config:
+  - `tool.read_file`, `tool.list_projects`, `tool.list_directory`,
+    `tool.search_files`, `tool.git_status`, `tool.git_diff`, `tool.git_log`,
+    `tool.git_branch_current`, `tool.tail_log`,
+    `tool.list_systemd_services`, `tool.get_system_info`
+
+Default `audit_reads: false` per evitare rumore — i read sono frequenti.
+
+### Sanitizzazione (defense in depth)
+
+`audit.py` applica una pass aggiuntiva di sanitizzazione su ogni evento,
+DUPLICANDO la sanitizzazione che i tool fanno prima. È intenzionale:
+l'audit è la "seconda riga" se un tool dimenticasse di sanitizzare.
+
+Regole:
+  - **Token plain mai loggato.** Si usa `token_log_id` da `auth.py`
+    (= sha256(token)[:8]).
+  - Chiavi che contengono (case-insensitive substring) `token`, `password`,
+    `passwd`, `secret`, `api_key`, `apikey`, `private_key` →
+    valore sostituito con `<redacted>`.
+  - Path che contengono segmenti `.env`, `secrets`, `credentials`, `.aws`,
+    `.ssh`, `.gnupg`, `.kube`, `.docker` → `<redacted-path>`.
+  - Pass ricorsiva su dict/list annidati.
+  - Helper `summarize_content(content)` per file: solo `{bytes, content_sha8}`.
+  - Helper `summarize_command_output(output)` per stdout/stderr: head 500ch
+    + tail 500ch + `total_sha8` + `total_bytes` + `truncated: bool`.
+
+### Rotazione e retention
+
+  - **Rotazione per size**: `rotation_size_mb` (default 50). Quando
+    `audit.log` supera la soglia, viene rinominato (atomic rename POSIX su
+    stesso fs), gzippato in `audit-YYYYMMDD-HHMMSS.log.gz`, e un nuovo
+    `audit.log` viene aperto.
+  - **Atomicity**: tutta la rotazione avviene sotto `threading.Lock` →
+    nessun evento perso anche con scritture concorrenti.
+  - **Retention**: `retention_days` (default 90). All'avvio del processo,
+    i file `audit-*.log.gz` con `mtime` più vecchio di N giorni vengono
+    eliminati.
+
+### Configurazione
+
+Tutto opzionale — il blocco `audit:` può essere omesso. Default:
+
+```yaml
+audit:
+  log_dir: <server.log_dir>/audit  # se non specificato
+  rotation_size_mb: 50
+  retention_days: 90
+  audit_reads: false
+```
+
 ## Strategia deny list (security/commands.py)
 
 La validazione comandi usa **due strategie distinte** in cascata, scelte in

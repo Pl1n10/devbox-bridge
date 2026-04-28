@@ -71,6 +71,25 @@ class AuthConfig(BaseModel):
     token_hash_file: Path
 
 
+class AuditConfig(BaseModel):
+    """Config audit log. Tutti i campi opzionali con default sensati: il
+    blocco `audit:` può essere completamente omesso da config.yaml."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    log_dir: Path | None = None  # default: <server.log_dir>/audit
+    rotation_size_mb: int = Field(default=50, ge=1, le=10_000)
+    retention_days: int = Field(default=90, ge=1, le=3650)
+    audit_reads: bool = False
+
+    @field_validator("log_dir")
+    @classmethod
+    def _log_dir_absolute(cls, v: Path | None) -> Path | None:
+        if v is None:
+            return None
+        return _require_absolute(v, "audit.log_dir")
+
+
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -124,6 +143,7 @@ class AppConfig(BaseModel):
 
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig
+    audit: AuditConfig = Field(default_factory=AuditConfig)
     projects: dict[ProjectName, ProjectConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")

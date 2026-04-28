@@ -14,6 +14,15 @@ auth:
   # in /etc/devbox-bridge/token.sha256 (chmod 600, owner devbox-bridge).
   token_hash_file: "/etc/devbox-bridge/token.sha256"
 
+# Blocco opzionale — tutti i campi hanno default sensati, puoi omettere
+# l'intera sezione `audit:` e funziona uguale.
+audit:
+  # log_dir: default = <server.log_dir>/audit
+  # log_dir: "/var/log/devbox-bridge/audit"
+  rotation_size_mb: 50    # rotazione + gzip oltre questa dimensione
+  retention_days: 90      # file .gz più vecchi vengono eliminati al boot
+  audit_reads: false      # se true logga anche read_file/list_directory/git_status/...
+
 projects:
 
   # ─────────────────────────────────────────────────────────────────
