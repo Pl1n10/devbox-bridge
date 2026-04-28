@@ -1,0 +1,45 @@
+minimum_pre_commit_version: "4.0.0"
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: block-config-yaml
+        name: Blocca commit di config.yaml (solo .example va committato)
+        entry: bash -c 'if git diff --cached --name-only | grep -E "(^|/)config\.yaml$" >/dev/null; then echo "ERROR: config.yaml non va committato (può contenere path/whitelist sensibili). Solo config.yaml.example è permesso."; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: block-token-files
+        name: Blocca commit di file token / secret
+        entry: bash -c 'if git diff --cached --name-only | grep -E "(^|/)(token|token\.sha256|.*\.token|\.env)$" >/dev/null; then echo "ERROR: file token/secret non vanno committati."; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: mypy
+        name: mypy (strict, solo src/)
+        entry: .venv/bin/mypy
+        language: system
+        types: [python]
+        files: ^src/
+        pass_filenames: false
+        args: [src]

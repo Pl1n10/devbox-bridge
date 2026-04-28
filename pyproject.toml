@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devbox-bridge"
+version = "0.1.0"
+description = "MCP server custom per esporre la devbox a claude.ai via Cloudflare Tunnel."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Roberto Novara" }]
+license = { text = "MIT" }
+dependencies = [
+    "fastmcp==3.2.4",
+    "pydantic==2.13.3",
+    "pydantic-settings==2.14.0",
+    "PyYAML==6.0.3",
+    "uvicorn==0.46.0",
+    "structlog==25.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==7.1.0",
+    "httpx==0.28.1",
+    "ruff==0.15.12",
+    "mypy==1.20.2",
+    "pre-commit==4.6.0",
+]
+
+[project.scripts]
+devbox-bridge = "devbox_bridge.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "PT"]
+ignore = ["S101"]  # assert in tests is ok
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "PT011"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]

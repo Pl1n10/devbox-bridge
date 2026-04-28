@@ -1,0 +1,208 @@
+# devbox-bridge — config di esempio
+# Copia in `config.yaml` ed edita.
+# Per attivare un progetto, decommenta il blocco e verifica che il path esista
+# (i path qui sono presi dai 14 progetti del global context ~/.claude/CLAUDE.md;
+#  se la directory non esiste sulla devbox, lascia commentato).
+
+server:
+  bind: "127.0.0.1:8765"
+  log_level: "INFO"
+  log_dir: "/var/log/devbox-bridge"
+
+auth:
+  # Hash sha256 del bearer token. Il file viene generato da deploy/install.sh
+  # in /etc/devbox-bridge/token.sha256 (chmod 600, owner devbox-bridge).
+  token_hash_file: "/etc/devbox-bridge/token.sha256"
+
+projects:
+
+  # ─────────────────────────────────────────────────────────────────
+  # Progetto attivo: devbox-bridge stesso (utile per dogfooding)
+  # ─────────────────────────────────────────────────────────────────
+  devbox-bridge:
+    path: "/home/hypn0/projects/devbox-bridge"
+    write_enabled: false
+    allow_push: false
+    test_command: "pytest -x --tb=short"
+    lint_command: "ruff check ."
+    build_command: null
+    command_whitelist:
+      - "^pytest( .*)?$"
+      - "^ruff( .*)?$"
+      - "^mypy( .*)?$"
+    env_passthrough: []
+
+  # ─────────────────────────────────────────────────────────────────
+  # I 14 progetti del global context — placeholder.
+  # Decommenta SOLO dopo aver verificato che il path esista sulla devbox.
+  # ─────────────────────────────────────────────────────────────────
+
+  # sidebiz-agent:
+  #   path: "/home/hypn0/projects/sidebiz-agent"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "pytest -x --tb=short"
+  #   lint_command: "ruff check ."
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^pytest( .*)?$"
+  #     - "^ruff( .*)?$"
+  #     - "^alembic upgrade head$"
+  #   env_passthrough:
+  #     - "DATABASE_URL_TEST"
+
+  # zfssa-healthcheck:
+  #   path: "/home/hypn0/projects/zfssa-healthcheck"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "pwsh -c Invoke-Pester"
+  #   lint_command: null
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^pwsh( .*)?$"
+  #   env_passthrough: []
+
+  # nbu-control-room:
+  #   path: "/home/hypn0/projects/control-room"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "npm test -- --run"
+  #   lint_command: "npm run lint"
+  #   build_command: "npm run build"
+  #   command_whitelist:
+  #     - "^npm (test|run lint|run build|ci)( .*)?$"
+  #   env_passthrough: []
+
+  # snow-dispatcher:
+  #   path: "/home/hypn0/projects/snow-dispatcher"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "npm test"
+  #   lint_command: "npm run lint"
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^npm (test|run lint|ci)( .*)?$"
+  #   env_passthrough: []
+
+  # frutta-verdura:
+  #   path: "/home/hypn0/projects/frutta-verdura"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "npm test"
+  #   lint_command: "npm run lint"
+  #   build_command: "npm run build"
+  #   command_whitelist:
+  #     - "^npm (test|run lint|run build|ci)( .*)?$"
+  #     - "^npx prisma (migrate|generate)( .*)?$"
+  #   env_passthrough: []
+
+  # nekontrol:
+  #   path: "/home/hypn0/projects/nekontrol"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "go test ./..."
+  #   lint_command: "golangci-lint run"
+  #   build_command: "go build ./..."
+  #   command_whitelist:
+  #     - "^go (test|build|vet|mod tidy)( .*)?$"
+  #     - "^golangci-lint run( .*)?$"
+  #   env_passthrough: []
+
+  # nbu-policy-generator:
+  #   path: "/home/hypn0/projects/nbu-policy-generator"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "go test ./..."
+  #   lint_command: "golangci-lint run"
+  #   build_command: "go build ./..."
+  #   command_whitelist:
+  #     - "^go (test|build|vet)( .*)?$"
+  #     - "^golangci-lint run( .*)?$"
+  #     - "^npm (test|run lint|run build|ci)( .*)?$"
+  #   env_passthrough: []
+
+  # skippetsitting:
+  #   path: "/home/hypn0/projects/skippetsitting"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "npm test"
+  #   lint_command: "npm run lint"
+  #   build_command: "npm run build"
+  #   command_whitelist:
+  #     - "^npm (test|run lint|run build|ci)( .*)?$"
+  #   env_passthrough: []
+
+  # evotrader:
+  #   # ⚠️ Patch H — mai eseguire test che possano emettere ordini reali.
+  #   # Mantieni write_enabled=false e usa command_whitelist solo per pytest.
+  #   path: "/home/hypn0/projects/evotrader"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "pytest -x --tb=short"
+  #   lint_command: "ruff check ."
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^pytest( .*)?$"
+  #     - "^ruff( .*)?$"
+  #   env_passthrough: []
+
+  # robo-pac-etf:
+  #   # ⚠️ Sempre dry-run di default, niente esecuzione reale automatica.
+  #   path: "/home/hypn0/projects/robo-pac-etf"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "pytest -x --tb=short"
+  #   lint_command: "ruff check ."
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^pytest( .*)?$"
+  #     - "^ruff( .*)?$"
+  #   env_passthrough: []
+
+  # ai-readiness:
+  #   path: "/home/hypn0/projects/ai-readiness"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "pytest -x --tb=short"
+  #   lint_command: "ruff check ."
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^pytest( .*)?$"
+  #     - "^ruff( .*)?$"
+  #     - "^aiready( .*)?$"
+  #   env_passthrough: []
+
+  # autowiki-rag:
+  #   path: "/home/hypn0/projects/autowiki-rag"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "pytest -x --tb=short"
+  #   lint_command: "ruff check ."
+  #   build_command: null
+  #   command_whitelist:
+  #     - "^pytest( .*)?$"
+  #     - "^ruff( .*)?$"
+  #   env_passthrough: []
+
+  # opentune:
+  #   path: "/home/hypn0/projects/opentune"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "go test ./..."
+  #   lint_command: "golangci-lint run"
+  #   build_command: "go build ./..."
+  #   command_whitelist:
+  #     - "^go (test|build|vet)( .*)?$"
+  #     - "^golangci-lint run( .*)?$"
+  #   env_passthrough: []
+
+  # portfolio-site:
+  #   path: "/home/hypn0/projects/portfolio-site"   # TODO verificare path reale
+  #   write_enabled: false
+  #   allow_push: false
+  #   test_command: "npm test"
+  #   lint_command: "npm run lint"
+  #   build_command: "npm run build"
+  #   command_whitelist:
+  #     - "^npm (test|run lint|run build|ci)( .*)?$"
+  #   env_passthrough: []

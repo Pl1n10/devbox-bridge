@@ -1,0 +1,11 @@
+# Snippet ingress per il cloudflared già installato sulla devbox.
+# Aggiungere al `config.yml` di cloudflared (di solito /etc/cloudflared/config.yml).
+#
+# ingress:
+#   - hostname: mcpdev.robertonovara.me
+#     service: http://127.0.0.1:8765
+#   - service: http_status:404
+#
+# Dopo la modifica:
+#   sudo systemctl restart cloudflared
+#   sudo cloudflared tunnel route dns <TUNNEL_NAME> mcpdev.robertonovara.me   # solo prima volta

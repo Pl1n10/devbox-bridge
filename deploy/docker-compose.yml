@@ -1,0 +1,24 @@
+# TODO (step 11): docker-compose definitivo.
+#
+# services:
+#   devbox-bridge:
+#     build:
+#       context: ..
+#       dockerfile: deploy/Dockerfile
+#     container_name: devbox-bridge
+#     restart: unless-stopped
+#     ports:
+#       - "127.0.0.1:8765:8765"
+#     volumes:
+#       - /etc/devbox-bridge:/etc/devbox-bridge:ro
+#       - /var/log/devbox-bridge:/var/log/devbox-bridge
+#       # i mount dei progetti vanno aggiunti per progetto, ro o rw a seconda di write_enabled.
+#       # Esempio (decommenta e replica per ogni progetto attivo):
+#       # - /home/hypn0/projects/devbox-bridge:/home/hypn0/projects/devbox-bridge:ro
+#     read_only: true
+#     tmpfs:
+#       - /tmp
+#     security_opt:
+#       - no-new-privileges:true
+#     cap_drop:
+#       - ALL

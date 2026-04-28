@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local config (mai committare token o config con write_enabled produzione)
+config.yaml
+*.local.yaml
+.env
+.env.*
+!.env.example
+
+# Secrets / token
+*.token
+token
+token.sha256
+/etc/devbox-bridge/
+
+# Logs (sia locali che il path di prod)
+*.log
+logs/
+/var/log/devbox-bridge/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store

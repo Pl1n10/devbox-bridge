@@ -1,0 +1,38 @@
+# TODO (step 11): systemd unit definitivo con hardening.
+# Bozza:
+#
+# [Unit]
+# Description=devbox-bridge MCP server
+# After=network-online.target
+# Wants=network-online.target
+#
+# [Service]
+# Type=simple
+# User=devbox-bridge
+# Group=devbox-bridge
+# WorkingDirectory=/opt/devbox-bridge
+# ExecStart=/opt/devbox-bridge/.venv/bin/devbox-bridge
+# Environment=DEVBOX_BRIDGE_CONFIG=/etc/devbox-bridge/config.yaml
+# Restart=on-failure
+# RestartSec=5
+#
+# # Hardening
+# NoNewPrivileges=yes
+# ProtectSystem=strict
+# ProtectHome=read-only
+# ReadWritePaths=/var/log/devbox-bridge
+# ReadOnlyPaths=/home/hypn0/projects
+# PrivateTmp=yes
+# ProtectKernelTunables=yes
+# ProtectKernelModules=yes
+# ProtectControlGroups=yes
+# RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# RestrictNamespaces=yes
+# LockPersonality=yes
+# MemoryDenyWriteExecute=yes
+# RestrictRealtime=yes
+# SystemCallArchitectures=native
+# SystemCallFilter=@system-service
+#
+# [Install]
+# WantedBy=multi-user.target
