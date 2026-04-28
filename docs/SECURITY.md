@@ -26,6 +26,33 @@
 - Cloudflare Access davanti al tunnel come 2° fattore (consigliato)
 - Audit log su file separato per ogni azione write/exec
 
+## Rate limit — proprietà e limiti
+
+Il rate limit (60 chiamate/min per token) è implementato in-memory in
+`auth.RateLimiter`. Tre proprietà da conoscere:
+
+1. **Reset al restart del server.** Un crash o un `systemctl restart devbox-bridge`
+   azzera il bucket. Accettabile: il restart è già un evento raro, e Cloudflare
+   Tunnel + Cloudflare Access aggiungono un secondo layer di throttling.
+2. **Per-worker, non globale.** Funziona correttamente solo con singolo worker
+   uvicorn. Se in futuro si scala a `--workers N`, il limite diventa N×60/min
+   effettivo. Il deploy systemd attuale usa worker singolo.
+3. **Non persiste tra crash.** Il bucket vive solo in memoria del processo.
+
+Non è un bug: scelta consapevole di semplicità. Evoluzione naturale, se servisse:
+Redis o Cloudflare Rate Limiting davanti al tunnel.
+
+### Token invalidi NON consumano il rate limit
+
+Il rate limiter viene applicato **dopo** la verifica del token. Un attaccante che
+spara migliaia di token random verso `mcpdev.robertonovara.me` (DNS pubblico) NON
+satura il bucket di un token valido. Razionale:
+
+- Token random da 32 byte = 2²⁵⁶ spazio di ricerca → brute-force non-issue cripticamente.
+- Difesa in profondità extra (rate limit anche su auth fail, lockout per IP, ecc.)
+  la mette **Cloudflare Access** davanti al tunnel, non in-app.
+- Lasciare il bucket in-app vulnerabile a "auth-spam DoS" sarebbe un buco logico.
+
 ## Progetti two-key — EvoTrader e Robo-PAC ETF
 
 Questi due progetti hanno guardrail finanziari nel global context e richiedono una
