@@ -5,9 +5,8 @@ Stato al **2026-04-29**.
 ## Stato git
 
 - **Branch:** `main`
-- **Ultimo commit:** step 6 (`tools/filesystem.py`) — vedi `git log --oneline -n 1` per l'hash effettivo.
-- **Working tree:** modifiche locali step 7 non committate, aggiornamenti docs,
-  `tests/test_server.py`, `gpt5.5-part.md` e `PM-MCP-PROJECT.md` non tracciati.
+- **Ultimo commit:** step 7 (`server.py` + middleware auth/audit) — `0671182`.
+- **Working tree:** clean.
 
 ## Step completati
 
@@ -22,7 +21,7 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
 - `733bcf0` — patch: `/opt` aggiunto ai `_DANGER_PATHS` di `security/commands.py`
 - `1793358` — step 5: `audit.py` (logger thread-safe, rotazione+gzip, retention, sanitizzazione `<redacted>` / `<redacted-path>`)
 - `a8553a6` — step 6: `tools/filesystem.py` (read/write/patch/list/search). 6 tool con security path-validation + binary/UTF-8 strict + ripgrep wrapper + glob anti-traversal + write enforcement preventivo. 38 test, coverage 90%. ProjectConfig esteso con `max_read_bytes` (ceiling 50 MB). Branch difensivi non testati documentati in `FAILURES.md`.
-- `TBD` — step 7: `server.py` FastMCP funzionante per i 6 tool filesystem. Aggiunti middleware bearer auth/rate-limit, mapping 401/429, audit wrapper per success/error/denied, HTTP app su `/mcp`, e `tests/test_server.py` (12 test). Aggiornati README/docs/PM e aggiunto `gpt5.5-part.md` con il dettaglio degli interventi. Verifica locale: `237 passed, 1 skipped`; `mypy src` pulito; `ruff` pulito sui file step 7.
+- `0671182` — step 7: `server.py` FastMCP funzionante per i 6 tool filesystem. Aggiunti middleware bearer auth/rate-limit, mapping 401/429, audit wrapper per success/error/denied, HTTP app su `/mcp`, e `tests/test_server.py` (12 test). Aggiornati README/docs/PM e aggiunto `gpt5.5-part.md` con il dettaglio degli interventi. Verifica locale: `237 passed, 1 skipped`; `mypy src` pulito; `ruff` pulito sui file step 7.
 
 ## Step in corso
 
