@@ -92,6 +92,9 @@ Mapping attuale:
 
 - `PathSecurityError`, `GlobSecurityError`, `WriteNotAllowedError` →
   `event="path.rejected"`, `outcome="denied"`;
+- `PushNotAllowedError` (git tool su progetto con `allow_push=false`) →
+  `event="tool.git_push"`, `outcome="denied"` (è una policy di tool, non
+  un'errore di path);
 - altre eccezioni tool → `event="tool.<name>"`, `outcome="error"`;
 - success → `event="tool.<name>"`, `outcome="success"`.
 

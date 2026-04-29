@@ -73,6 +73,39 @@ async def test_create_mcp_registers_filesystem_tools(config_ro: AppConfig) -> No
 
 
 @pytest.mark.asyncio
+async def test_create_mcp_registers_git_tools(config_ro: AppConfig) -> None:
+    mcp = create_mcp(config_ro, _audit(config_ro))
+    tool_names = {tool.name for tool in await mcp.list_tools()}
+    assert {
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_branch_current",
+        "git_create_branch",
+        "git_commit",
+        "git_push",
+    } <= tool_names
+
+
+@pytest.mark.asyncio
+async def test_git_push_denied_audited_as_tool_event(
+    config_git_rw: AppConfig,
+) -> None:
+    """allow_push=False → PushNotAllowedError → outcome=denied, event=tool.git_push."""
+    log = _audit(config_git_rw)
+    mcp = create_mcp(config_git_rw, log)
+
+    with pytest.raises(ToolError):
+        await mcp.call_tool("git_push", {"project": "gitproj"})
+
+    lines = _audit_lines(log)
+    assert len(lines) == 1
+    assert lines[0]["event"] == "tool.git_push"
+    assert lines[0]["outcome"] == "denied"
+    assert lines[0]["error_class"] == "PushNotAllowedError"
+
+
+@pytest.mark.asyncio
 async def test_read_file_tool_returns_structured_content(config_ro: AppConfig) -> None:
     log = _audit(config_ro)
     mcp = create_mcp(config_ro, log)

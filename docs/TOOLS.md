@@ -1,7 +1,7 @@
 # TOOLS — Reference dei tool MCP esposti
 
-> Stato step 7: i tool filesystem sono registrati nel server FastMCP e
-> disponibili su HTTP `/mcp`. Gli altri gruppi sono ancora placeholder.
+> Stato step 8: i tool filesystem e git sono registrati nel server FastMCP
+> e disponibili su HTTP `/mcp`. Esecuzione e sistema sono ancora placeholder.
 
 ## Transport
 
@@ -36,15 +36,50 @@ Audit:
 
 ## Git
 
-Placeholder step 8:
+Implementati e registrati. Tutti eseguono `git --no-pager <cmd>` con
+`subprocess.run` (mai `shell=True`), `cwd=project_root`, env sanitizzato
+via `security/env.py`, timeout 30s.
 
-- `git_status(project)` — read
-- `git_diff(project, staged=False, path=None)` — read
-- `git_log(project, limit=20)` — read
-- `git_branch_current(project)` — read
-- `git_create_branch(project, name)` — **write**
-- `git_commit(project, message, paths)` — **write**
-- `git_push(project, remote='origin')` — **write**, richiede `allow_push: true`
+Read:
+
+- `git_status(project)` — porcelain v1 con `-z`. Ritorna `branch`, `detached`,
+  `upstream`, `ahead`, `behind`, `staged[]`, `unstaged[]`, `untracked[]`,
+  `clean`. Rename/copy: la entry segnala `code=R|C` e include `orig`.
+- `git_diff(project, staged=False, path=None)` — testo unified diff. Se
+  `path` è valorizzato, viene validato con `resolve_within` prima di passare
+  a `git diff -- <rel>`. Output troncato a 2 MB con `truncated: true`.
+- `git_log(project, limit=20)` — campi `hash`, `short_hash`, `author_name`,
+  `author_email`, `date` (ISO 8601), `subject`. `limit` clampato a 200 (max).
+- `git_branch_current(project)` — `{branch, detached, head}`. In stato
+  detached `branch` è `None` e `head` contiene lo SHA40.
+
+Write (richiedono `write_enabled: true`):
+
+- `git_create_branch(project, name)` — `git checkout -b`. Nome validato con
+  `git check-ref-format --branch`; refiuta newline, `\0` e branch già
+  esistenti (`GitCommandError` con stderr esplicito).
+- `git_commit(project, message, paths)` — paths obbligatori (mai
+  `git commit -a`). Ogni path validato con `resolve_within`. Se `paths`
+  non hanno modifiche, fallisce esplicitamente.
+- `git_push(project, remote='origin')` — push del branch corrente
+  (`git push <remote> HEAD:<branch>`). Richiede `allow_push: true` (altrimenti
+  `PushNotAllowedError`). Remote validato con regex stretta. Backstop
+  hardcoded contro `--force`/`--mirror`/`--delete`/`--all`/`--prune`/
+  `--force-with-lease`. Output stdout/stderr troncato a 64 KB.
+
+NON implementati di proposito: `reset --hard`, `push --force`, `clean`,
+`branch -D`. Vedi `devbox-bridge-brief.md:55`.
+
+Mapping audit / outcome:
+
+- `WriteNotAllowedError` (write su progetto read-only) →
+  `event="path.rejected"`, `outcome="denied"`.
+- `PushNotAllowedError` (push su progetto con `allow_push=false`) →
+  `event="tool.git_push"`, `outcome="denied"`.
+- `PathSecurityError` (path traversal in `git_diff`/`git_commit`) →
+  `event="path.rejected"`, `outcome="denied"`.
+- `GitCommandError`, `BranchNameError`, `RemoteNameError`, ... →
+  `event="tool.<name>"`, `outcome="error"`.
 
 ## Esecuzione
 

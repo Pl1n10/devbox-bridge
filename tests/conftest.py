@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import subprocess
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -176,6 +178,116 @@ def config_factory(
         )
 
     return _factory
+
+
+@pytest.fixture
+def tmp_git_repo(tmp_path: Path) -> Path:
+    """Project root con repo git inizializzato e 2 commit minimi.
+
+    Layout:
+      ./README.md     (committed)
+      ./src/main.py   (committed)
+    Branch iniziale: `main` (forzato a `git init -b main` per determinismo).
+    Identità locale: `Test <test@example.com>`, `commit.gpgsign=false`.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git non disponibile")
+
+    root = tmp_path / "gitproj"
+    root.mkdir()
+    (root / "src").mkdir()
+    (root / "README.md").write_text("# gitproj\n", encoding="utf-8")
+    (root / "src" / "main.py").write_text(
+        "def main() -> None:\n    print('hi')\n", encoding="utf-8"
+    )
+
+    def run(*cmd: str) -> None:
+        subprocess.run(
+            list(cmd),
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    run("git", "init", "-b", "main")
+    run("git", "config", "user.email", "test@example.com")
+    run("git", "config", "user.name", "Test")
+    run("git", "config", "commit.gpgsign", "false")
+    run("git", "add", "README.md")
+    run("git", "commit", "-m", "initial commit")
+    run("git", "add", "src/main.py")
+    run("git", "commit", "-m", "add main")
+
+    return root
+
+
+@pytest.fixture
+def tmp_git_repo_with_origin(tmp_git_repo: Path, tmp_path: Path) -> tuple[Path, Path]:
+    """tmp_git_repo + un bare repo locale come `origin`.
+
+    Il bare repo è in `<tmp_path>/origin.git`. Permette di testare git_push
+    senza rete ed evitando dipendenze esterne.
+    """
+    bare = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(bare)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=tmp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+    return tmp_git_repo, bare
+
+
+@pytest.fixture
+def config_git_ro(
+    tmp_path: Path, tmp_token_file: Path, tmp_git_repo: Path
+) -> AppConfig:
+    """AppConfig su repo git, write_enabled=False."""
+    return _make_config(
+        tmp_path,
+        tmp_token_file,
+        project_name="gitproj",
+        project_path=tmp_git_repo,
+        write_enabled=False,
+    )
+
+
+@pytest.fixture
+def config_git_rw(
+    tmp_path: Path, tmp_token_file: Path, tmp_git_repo: Path
+) -> AppConfig:
+    """AppConfig su repo git, write_enabled=True, allow_push=False."""
+    return _make_config(
+        tmp_path,
+        tmp_token_file,
+        project_name="gitproj",
+        project_path=tmp_git_repo,
+        write_enabled=True,
+    )
+
+
+@pytest.fixture
+def config_git_push(
+    tmp_path: Path,
+    tmp_token_file: Path,
+    tmp_git_repo_with_origin: tuple[Path, Path],
+) -> AppConfig:
+    """AppConfig su repo git con remote bare locale, allow_push=True."""
+    repo, _bare = tmp_git_repo_with_origin
+    return _make_config(
+        tmp_path,
+        tmp_token_file,
+        project_name="gitproj",
+        project_path=repo,
+        write_enabled=True,
+        allow_push=True,
+    )
 
 
 @pytest.fixture(autouse=True)

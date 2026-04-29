@@ -32,7 +32,7 @@ Senza il bridge, ogni interazione tra claude.ai e i 14 progetti di Roberto richi
 
 ## Stato a oggi
 
-**Aprile 2026 — 7 di 12 step completati**, suite 237 test verdi.
+**Aprile 2026 — 8 di 12 step completati**, suite 271 test verdi.
 
 | Step | Componente | Stato |
 |------|-----------|-------|
@@ -43,13 +43,13 @@ Senza il bridge, ogni interazione tra claude.ai e i 14 progetti di Roberto richi
 | 5 | `audit.py` | ✅ |
 | 6 | `tools/filesystem.py` | ✅ |
 | 7 | `server.py` (FastMCP + middleware) | ✅ |
-| 8 | `tools/git.py` | ⏳ next |
-| 9 | `tools/execution.py` | pending |
+| 8 | `tools/git.py` | ✅ |
+| 9 | `tools/execution.py` | ⏳ next |
 | 10 | `tools/system.py` | pending |
 | 11 | `install.sh` (deploy) | pending |
 | 12 | Documentazione finale | pending |
 
-Stima residua: 4-6 ore di lavoro effettivo, spalmate.
+Stima residua: 3-5 ore di lavoro effettivo, spalmate.
 
 ---
 

@@ -21,7 +21,9 @@ from devbox_bridge.auth import Authenticator, AuthFailed, RateLimitExceeded, tok
 from devbox_bridge.config import AppConfig, load_config
 from devbox_bridge.security.paths import PathSecurityError
 from devbox_bridge.tools import filesystem
+from devbox_bridge.tools import git as git_tools
 from devbox_bridge.tools.filesystem import GlobSecurityError, WriteNotAllowedError
+from devbox_bridge.tools.git import PushNotAllowedError
 
 CONFIG_ENV_VAR = "DEVBOX_BRIDGE_CONFIG"
 DEFAULT_CONFIG_PATH = "config.yaml"
@@ -122,7 +124,15 @@ def _event_for_tool(tool_name: str, exc: BaseException | None) -> str:
 
 
 def _outcome_for_exception(exc: BaseException) -> str:
-    if isinstance(exc, (PathSecurityError, GlobSecurityError, WriteNotAllowedError)):
+    if isinstance(
+        exc,
+        (
+            PathSecurityError,
+            GlobSecurityError,
+            WriteNotAllowedError,
+            PushNotAllowedError,
+        ),
+    ):
         return "denied"
     return "error"
 
@@ -289,6 +299,107 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
                     glob=glob,
                     max_matches=max_matches,
                 ),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_status(project: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_status",
+                project,
+                {"project": project},
+                lambda: git_tools.git_status(config, project),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_diff(
+        project: str,
+        staged: bool = False,
+        path: str | None = None,
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_diff",
+                project,
+                {"project": project, "staged": staged, "path": path},
+                lambda: git_tools.git_diff(
+                    config, project, staged=staged, path=path
+                ),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_log(project: str, limit: int = 20) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_log",
+                project,
+                {"project": project, "limit": limit},
+                lambda: git_tools.git_log(config, project, limit=limit),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_branch_current(project: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_branch_current",
+                project,
+                {"project": project},
+                lambda: git_tools.git_branch_current(config, project),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_create_branch(project: str, name: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_create_branch",
+                project,
+                {"project": project, "name": name},
+                lambda: git_tools.git_create_branch(config, project, name),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_commit(
+        project: str,
+        message: str,
+        paths: list[str],
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_commit",
+                project,
+                {"project": project, "message": message, "paths": paths},
+                lambda: git_tools.git_commit(config, project, message, paths),
+            ),
+        )
+
+    @mcp.tool()
+    async def git_push(project: str, remote: str = "origin") -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "git_push",
+                project,
+                {"project": project, "remote": remote},
+                lambda: git_tools.git_push(config, project, remote=remote),
             ),
         )
 
