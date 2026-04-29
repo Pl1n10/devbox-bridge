@@ -6,7 +6,8 @@ Stato al **2026-04-29**.
 
 - **Branch:** `main`
 - **Ultimo commit:** step 6 (`tools/filesystem.py`) — vedi `git log --oneline -n 1` per l'hash effettivo.
-- **Working tree:** clean.
+- **Working tree:** modifiche locali step 7 non committate, aggiornamenti docs,
+  `tests/test_server.py`, `gpt5.5-part.md` e `PM-MCP-PROJECT.md` non tracciati.
 
 ## Step completati
 
@@ -21,37 +22,13 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
 - `733bcf0` — patch: `/opt` aggiunto ai `_DANGER_PATHS` di `security/commands.py`
 - `1793358` — step 5: `audit.py` (logger thread-safe, rotazione+gzip, retention, sanitizzazione `<redacted>` / `<redacted-path>`)
 - `a8553a6` — step 6: `tools/filesystem.py` (read/write/patch/list/search). 6 tool con security path-validation + binary/UTF-8 strict + ripgrep wrapper + glob anti-traversal + write enforcement preventivo. 38 test, coverage 90%. ProjectConfig esteso con `max_read_bytes` (ceiling 50 MB). Branch difensivi non testati documentati in `FAILURES.md`.
+- `TBD` — step 7: `server.py` FastMCP funzionante per i 6 tool filesystem. Aggiunti middleware bearer auth/rate-limit, mapping 401/429, audit wrapper per success/error/denied, HTTP app su `/mcp`, e `tests/test_server.py` (12 test). Aggiornati README/docs/PM e aggiunto `gpt5.5-part.md` con il dettaglio degli interventi. Verifica locale: `237 passed, 1 skipped`; `mypy src` pulito; `ruff` pulito sui file step 7.
 
 ## Step in corso
 
-**Step 7 — `src/devbox_bridge/server.py` skeleton funzionante.** ⚠️ Review puntigliosa: è il punto in cui auth + rate limit + audit + paths + i tool del filesystem convergono su FastMCP.
+**Step 8 — `src/devbox_bridge/tools/git.py`.**
 
-Note di integrazione già scritte come docstring in `src/devbox_bridge/server.py`:
-- `AuthFailed` → 401 generico (`"unauthorized"`), NIENTE `reason` esposto al client (resta solo nei log).
-- `RateLimitExceeded` → 429 + header `Retry-After: 60`.
-- `client_ip`: prima `X-Forwarded-For` (primo elemento `ip1, ip2, ip3` — Cloudflare Tunnel passa l'IP originale lì), fallback `request.client.host`, validazione con `ipaddress.ip_address()` (fallita → log `client_ip="(invalid)"` ma proseguo).
-
-**Mapping eccezioni filesystem → audit (da implementare nel server):**
-```
-PathSecurityError, GlobSecurityError, WriteNotAllowedError → outcome="denied", event="path.rejected"
-FileNotFoundError, IsADirectoryError, NotADirectoryError,
-  BinaryFileError, FileTooLargeError, UnicodeDecodeError,
-  ValueError, RipgrepNotFoundError                          → outcome="error"
-success                                                       → outcome="success", event="tool.<name>"
-```
-
-`tool.read_file`, `tool.list_*`, `tool.search_files` sono in `AUDITED_READ_EVENTS` → loggati solo se `audit.audit_reads=true`. `tool.write_file`, `tool.apply_patch` sono in `AUDITED_WRITE_EVENTS` → SEMPRE auditati.
-
-### Cosa fare alla ripresa (step 7)
-
-1. Leggere fino in fondo questa sezione + sezione "Decisioni di design non ovvie" sotto.
-2. Aggiungere `fastmcp` a `pyproject.toml` (verificare versione disponibile su PyPI).
-3. Implementare `server.py`: istanziare FastMCP, registrare i 6 tool del filesystem con i decoratori `@mcp.tool()`, applicare middleware auth + rate limit, esporre HTTP/SSE su `config.server.bind`.
-4. Map eccezioni → HTTP codes come da tabella sopra.
-5. Inietttare `AuditLogger` nei tool wrapper (i tool puri in `tools/filesystem.py` NON loggano: lo fa il server).
-6. Diff preview a utente PRIMA del commit (workflow concordato per server).
-7. Test integrazione su `tests/test_server.py` (nuovo): client HTTP fittizio (httpx) che chiama un tool, verifica auth, rate limit, audit log emesso.
-8. Aggiornare HANDOFF spostando step 7 in completati e mettendo step 8 in corso.
+Implementare i tool git read/write dichiarati nel placeholder. `git_push` deve verificare `project.allow_push` e fallire subito se False. Non implementare `reset --hard`, `push --force`, `clean`, `branch -D`.
 
 ## Step pending (in ordine)
 
@@ -97,7 +74,7 @@ source .venv/bin/activate
 pytest -q
 ```
 
-Atteso allo stato attuale (post step 6): `225 passed, 1 skipped` (lo skip è il placeholder di `tests/test_tools_git.py:18` per step 8). Coverage `tools/filesystem.py`: **90%** (le 19 righe scoperte sono branch difensivi, motivazione in `FAILURES.md`).
+Atteso allo stato attuale (post step 7): `237 passed, 1 skipped` (lo skip è il placeholder di `tests/test_tools_git.py:18` per step 8).
 
 Per quando aggiungeremo lint/mypy in pipeline:
 

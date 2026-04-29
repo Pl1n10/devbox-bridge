@@ -1,6 +1,7 @@
 # SECURITY — Threat model
 
-> **Skeleton — da completare nello step 12.**
+> Stato step 7: threat model e audit dei componenti implementati sono
+> documentati. La revisione finale andra completata dopo git/execution/system.
 
 ## Cosa devbox-bridge protegge
 
@@ -9,6 +10,8 @@
 - Token brute-force (compare_digest + rate limit 60/min)
 - Leak di secret via env (sanitizer rimuove `AWS_*`, `*_TOKEN`, `*_SECRET`, `*_KEY`)
 - Comandi distruttivi noti (deny list hardcoded: `rm -rf`, `dd if=`, fork bomb, curl|sh, ...)
+- Accesso HTTP anonimo al server MCP: ogni richiesta HTTP passa dal middleware
+  bearer prima di arrivare a FastMCP.
 
 ## Cosa devbox-bridge NON protegge
 
@@ -52,6 +55,50 @@ satura il bucket di un token valido. Razionale:
 - Difesa in profondità extra (rate limit anche su auth fail, lockout per IP, ecc.)
   la mette **Cloudflare Access** davanti al tunnel, non in-app.
 - Lasciare il bucket in-app vulnerabile a "auth-spam DoS" sarebbe un buco logico.
+
+## Integrazione HTTP/FastMCP
+
+`server.py` espone FastMCP tramite transport HTTP su `/mcp`.
+
+### Auth middleware
+
+Il middleware ASGI `BearerAuthMiddleware` controlla tutte le richieste HTTP:
+
+- legge `Authorization: Bearer <token>`;
+- valida il token con `Authenticator`;
+- applica il rate limit solo dopo auth success;
+- in caso di token mancante o invalido risponde `401` con body generico
+  `unauthorized`;
+- in caso di rate limit risponde `429` con header `Retry-After: 60`.
+
+Il client non riceve mai il motivo dettagliato del fallimento auth. Il motivo
+rimane solo nei log/audit server-side.
+
+### Client IP
+
+Per audit e rate-limit context:
+
+1. usa il primo valore di `X-Forwarded-For`, ad esempio `ip1` da
+   `ip1, ip2, ip3`;
+2. se manca, usa `request.client.host`;
+3. valida con `ipaddress.ip_address`;
+4. se il valore non e un IP valido, usa `client_ip="(invalid)"` e prosegue.
+
+### Mapping errori tool
+
+Il server mantiene i tool filesystem puri e aggiunge audit nel wrapper FastMCP.
+
+Mapping attuale:
+
+- `PathSecurityError`, `GlobSecurityError`, `WriteNotAllowedError` →
+  `event="path.rejected"`, `outcome="denied"`;
+- altre eccezioni tool → `event="tool.<name>"`, `outcome="error"`;
+- success → `event="tool.<name>"`, `outcome="success"`.
+
+`AuditLogger.should_audit()` decide se scrivere effettivamente l'evento. Quindi
+i read (`read_file`, `list_projects`, `list_directory`, `search_files`) restano
+silenziosi con `audit.audit_reads=false`, mentre write e reject vengono sempre
+scritti.
 
 ## Audit logging
 
