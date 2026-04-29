@@ -101,6 +101,10 @@ class ProjectConfig(BaseModel):
     build_command: str | None = None
     command_whitelist: list[str] = Field(default_factory=list)
     env_passthrough: list[str] = Field(default_factory=list)
+    # Override per progetto del limite di read inline. None → default 10MB nel
+    # tool. Ceiling 50MB: oltre questa soglia il content nel JSON response MCP
+    # satura il context window di qualunque client (vedi HANDOFF.md).
+    max_read_bytes: int | None = Field(default=None, ge=1024, le=50 * 1024 * 1024)
 
     @field_validator("path")
     @classmethod

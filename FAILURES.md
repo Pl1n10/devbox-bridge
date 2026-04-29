@@ -14,4 +14,22 @@
 
 ## Voci
 
-(vuoto per ora)
+### 2026-04-29 — coverage step 6 (tools/filesystem.py): 5 cluster di righe lasciati scoperti volontariamente
+
+**Approccio scartato:** portare il coverage di `tools/filesystem.py` oltre il 90% testando tutti i rami difensivi rimasti.
+
+**Perché non funziona / non è andato bene:** richiede ingegneria sproporzionata per confidenza marginale. Le 19 righe scoperte si dividono in 5 cluster, tutti con costo-test alto e rendimento-confidenza basso:
+
+1. **Ramo `<external>` post-`resolve_within`** (linee 128-129, 508-510). Defense-in-depth: il fallback `relative_to` fallisce solo se il path passa già `resolve_within` ma diventa esterno tra il check e l'uso (impossibile in pratica perché entrambi avvengono in stack frame consecutivi). Testarlo richiederebbe monkey-patch di `relative_to`, che dimostra solo "il monkey-patch funziona".
+2. **Race FS su `child.stat()` / symlink loop** (353-354, 380-381). `try/except OSError` cattura "file rimosso tra `iterdir()` e `stat()`". Testabile solo orchestrando race condition con thread → ingegneria sproporzionata.
+3. **`subprocess.TimeoutExpired` di rg** (454-455). Testabile solo con `time.sleep(31)` in un fixture (lento, fragile) o monkey-patch di `subprocess.run` (testa il monkey-patch, non il codice).
+4. **rg exit code ≠ {0, 1}** (461). Richiederebbe corromper il binario `rg` o mock di `subprocess.run`.
+5. **stdout rg corrotto** (469, 472-473, 503): righe vuote / non-JSON / path-text vuoto. Robustness su output ipotetico mai osservato in 14 anni di rg.
+
+Inoltre lasciate scoperte ma di natura analoga (OSError edge che NON sono input utente diretti, irraggiungibili dai 38 test correnti):
+- 334, 336: `list_directory` su rel_path inesistente / non-dir. Coverabili se servisse, ma simmetrici ai test `read_file_on_directory` già presenti.
+- 363: branch `else: type="other"` per socket/fifo/devnode dentro un progetto (esotico).
+
+**Alternativa adottata:** copertura al **90%** (target del brief) con i 38 test che coprono tutti i percorsi di security (path traversal, write enforcement, binary refuse, encoding strict, glob escape, ripgrep mancante) e tutti gli input utente legittimi (file inesistente, directory passata come file, max_matches=0, glob vuoto/home-relative). Le 19 righe scoperte sono error-handling difensivo, non gap funzionali.
+
+Se in futuro arriva un bug dal campo che riguarda una di queste linee, **allora** vale la pena scrivere il test (regressione mirata). Senza un caso reale, no.
