@@ -102,6 +102,11 @@ def _make_config(
     write_enabled: bool,
     allow_push: bool = False,
     max_read_bytes: int | None = None,
+    test_command: str | None = None,
+    lint_command: str | None = None,
+    build_command: str | None = None,
+    command_whitelist: list[str] | None = None,
+    env_passthrough: list[str] | None = None,
 ) -> AppConfig:
     return AppConfig(
         server=ServerConfig(
@@ -120,6 +125,11 @@ def _make_config(
                 write_enabled=write_enabled,
                 allow_push=allow_push,
                 max_read_bytes=max_read_bytes,
+                test_command=test_command,
+                lint_command=lint_command,
+                build_command=build_command,
+                command_whitelist=command_whitelist or [],
+                env_passthrough=env_passthrough or [],
             )
         },
     )
@@ -166,6 +176,11 @@ def config_factory(
         write_enabled: bool = False,
         allow_push: bool = False,
         max_read_bytes: int | None = None,
+        test_command: str | None = None,
+        lint_command: str | None = None,
+        build_command: str | None = None,
+        command_whitelist: list[str] | None = None,
+        env_passthrough: list[str] | None = None,
     ) -> AppConfig:
         return _make_config(
             tmp_path,
@@ -175,6 +190,11 @@ def config_factory(
             write_enabled=write_enabled,
             allow_push=allow_push,
             max_read_bytes=max_read_bytes,
+            test_command=test_command,
+            lint_command=lint_command,
+            build_command=build_command,
+            command_whitelist=command_whitelist,
+            env_passthrough=env_passthrough,
         )
 
     return _factory

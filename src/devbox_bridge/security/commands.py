@@ -252,23 +252,44 @@ def is_command_allowed(command: str, whitelist: list[str]) -> bool:
         return False
 
 
-def check_command(command: str, whitelist: list[str]) -> None:
-    """Verifica completa. Solleva CommandRejectedError se blocked.
+def check_deny_list(command: str) -> None:
+    """Verifica SOLO la deny list (parse + tokenize + regex). Solleva
+    CommandRejectedError se blocked.
+
+    Esposta come funzione pubblica per i tool che eseguono comandi
+    amministrativamente autorizzati (test/lint/build presi da config), per
+    cui la whitelist regex è bypassata MA la deny list deve restare attiva
+    (es. blocca per errore `pytest && rm -rf /` configurato in
+    `test_command`).
 
     Ordine:
       1. shlex parseable
       2. deny list tokenize (rm/chown/chmod/dd/mv/kill/mkfs)
       3. deny list regex (fork bomb, curl|sh, redirect, power mgmt)
-      4. whitelist regex fullmatch (almeno un pattern)
     """
     stripped = command.strip()
     if not stripped:
         raise CommandRejectedError("comando vuoto")
 
     argv = _check_parseable(stripped)
-
     _check_deny_tokenize(argv)
     _check_deny_regex(stripped)
+
+
+def check_command(command: str, whitelist: list[str]) -> None:
+    """Verifica completa: deny list + whitelist regex. Solleva
+    CommandRejectedError se blocked.
+
+    Usata per `run_command` (comando user-provided runtime). I 3 tool
+    `run_tests`/`run_lint`/`run_build` chiamano invece `check_deny_list`
+    direttamente (whitelist bypassata, vedi docstring lì).
+
+    Ordine:
+      1. check_deny_list (parse + tokenize + regex)
+      2. whitelist regex fullmatch (almeno un pattern)
+    """
+    check_deny_list(command)
+    stripped = command.strip()
 
     if not whitelist:
         raise CommandRejectedError(

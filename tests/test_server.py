@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ from devbox_bridge.server import (
     create_http_app,
     create_mcp,
 )
+
+PYTHON = sys.executable
 
 
 def _audit(config: AppConfig) -> AuditLogger:
@@ -289,3 +292,95 @@ def test_client_ip_invalid_value_is_marked() -> None:
         }
     )
     assert _client_ip_from_request(request) == "(invalid)"
+
+
+@pytest.mark.asyncio
+async def test_create_mcp_registers_execution_tools(config_ro: AppConfig) -> None:
+    mcp = create_mcp(config_ro, _audit(config_ro))
+    tool_names = {tool.name for tool in await mcp.list_tools()}
+    assert {"run_command", "run_tests", "run_lint", "run_build"} <= tool_names
+
+
+@pytest.mark.asyncio
+async def test_run_command_success_audits_outcome_detail_completed(
+    config_factory: Any, tmp_project_root: Path
+) -> None:
+    cfg = config_factory(
+        tmp_project_root,
+        write_enabled=True,
+        command_whitelist=[r"^.+ -c .+$"],
+    )
+    log = _audit(cfg)
+    mcp = create_mcp(cfg, log)
+
+    result = await mcp.call_tool(
+        "run_command",
+        {
+            "project": "myproj",
+            "command": f"{PYTHON} -c 'print(\"hi\")'",
+        },
+    )
+    assert result.structured_content["exit_code"] == 0
+
+    lines = _audit_lines(log)
+    assert len(lines) == 1
+    assert lines[0]["event"] == "tool.run_command"
+    assert lines[0]["outcome"] == "success"
+    assert lines[0]["outcome_detail"] == "completed"
+    # stdout/stderr riassunti, non inseriti raw
+    assert "total_sha8" in lines[0]["args_summary"]["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_run_command_denied_audits_command_rejected(
+    config_factory: Any, tmp_project_root: Path
+) -> None:
+    """rm -rf / passa la whitelist permissiva ma è bloccato dalla deny list →
+    event=command.rejected, outcome=denied."""
+    cfg = config_factory(
+        tmp_project_root,
+        write_enabled=True,
+        command_whitelist=[r"^.*$"],
+    )
+    log = _audit(cfg)
+    mcp = create_mcp(cfg, log)
+
+    with pytest.raises(ToolError):
+        await mcp.call_tool(
+            "run_command",
+            {"project": "myproj", "command": "rm -rf /"},
+        )
+
+    lines = _audit_lines(log)
+    assert len(lines) == 1
+    assert lines[0]["event"] == "command.rejected"
+    assert lines[0]["outcome"] == "denied"
+    assert lines[0]["error_class"] == "CommandRejectedError"
+    assert lines[0]["outcome_detail"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_command_long_command_truncated_in_audit(
+    config_factory: Any, tmp_project_root: Path
+) -> None:
+    """Comando >500 char nei kwargs viene troncato in args_summary
+    (protezione log poisoning). Il 'rm -rf /' resta visibile nel troncato
+    perché è nei primi 500 char."""
+    cfg = config_factory(
+        tmp_project_root,
+        write_enabled=True,
+        command_whitelist=[r"^.*$"],
+    )
+    log = _audit(cfg)
+    mcp = create_mcp(cfg, log)
+    huge = "rm -rf / " + "A" * 1000
+
+    with pytest.raises(ToolError):
+        await mcp.call_tool(
+            "run_command",
+            {"project": "myproj", "command": huge},
+        )
+
+    lines = _audit_lines(log)
+    assert "...[truncated]" in lines[0]["args_summary"]["command"]
+    assert len(lines[0]["args_summary"]["command"]) < len(huge)

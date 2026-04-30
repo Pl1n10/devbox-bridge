@@ -214,6 +214,10 @@ class AuditEvent(BaseModel):
     duration_ms: float | None = None
     error_class: str | None = None
     error_message: str | None = None
+    # Granularità sub-outcome per i tool exec. Non promosso a `outcome` (resta
+    # `success` se il subprocess è stato eseguito), ma utile per debrief log:
+    # `completed` | `nonzero_exit` | `timed_out`. None per tutti gli altri tool.
+    outcome_detail: str | None = None
 
 
 def _utc_now_iso() -> str:
@@ -285,6 +289,7 @@ class AuditLogger:
         duration_ms: float | None = None,
         error_class: str | None = None,
         error_message: str | None = None,
+        outcome_detail: str | None = None,
     ) -> None:
         """Logga un evento di audit. Il `tool` può essere None per eventi
         non-tool (auth.failed, command.rejected, ...)."""
@@ -304,6 +309,7 @@ class AuditLogger:
             duration_ms=duration_ms,
             error_class=error_class,
             error_message=error_message,
+            outcome_detail=outcome_detail,
         )
         line = json.dumps(record.model_dump(), ensure_ascii=False, sort_keys=True)
 

@@ -1,7 +1,7 @@
 # TOOLS — Reference dei tool MCP esposti
 
-> Stato step 8: i tool filesystem e git sono registrati nel server FastMCP
-> e disponibili su HTTP `/mcp`. Esecuzione e sistema sono ancora placeholder.
+> Stato step 9: i tool filesystem, git ed esecuzione sono registrati nel
+> server FastMCP e disponibili su HTTP `/mcp`. Sistema è ancora placeholder.
 
 ## Transport
 
@@ -83,12 +83,86 @@ Mapping audit / outcome:
 
 ## Esecuzione
 
-Placeholder step 9:
+Implementati e registrati. Tutti eseguono via `subprocess.run` con lista args
+(mai `shell=True`), `cwd=project_root`, env sanitizzato via `security/env.py`,
+`stdin=DEVNULL`. Tutti e 4 richiedono `write_enabled: true` sul progetto:
+**read-only mode = no execution**, anche per i comandi configurati in
+`config.yaml` (test/lint/build scrivono cache, artefatti, fix lint;
+fail-secure).
 
-- `run_tests(project)` — exec
-- `run_lint(project)` — exec
-- `run_build(project)` — exec
-- `run_command(project, command, timeout=60)` — exec, whitelist obbligatoria
+Tool:
+
+- `run_tests(project)` — esegue `project.test_command`. Timeout default 300s.
+- `run_lint(project)` — esegue `project.lint_command`. Timeout default 300s.
+- `run_build(project)` — esegue `project.build_command`. Timeout default 300s.
+- `run_command(project, command, timeout=60)` — comando arbitrario. Timeout
+  user-provided in `[1, 600]`s.
+
+Validazione comando:
+
+- `run_command` → deny list **+** whitelist regex (`re.fullmatch` su almeno un
+  pattern in `project.command_whitelist`).
+- `run_tests` / `run_lint` / `run_build` → solo deny list. La whitelist è
+  bypassata: i 3 comandi sono autorizzati amministrativamente perché stanno
+  in `config.yaml` (SoT del progetto). La deny list resta come fail-secure
+  contro errori tipo `test_command: "pytest && rm -rf /etc"` in config.
+
+Schema response (uguale per i 4 tool):
+
+```json
+{
+  "command": "pytest -q",
+  "exit_code": 0,
+  "duration_ms": 1234.5,
+  "stdout": "...",
+  "stderr": "...",
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "timed_out": false
+}
+```
+
+`stdout` e `stderr` sono troncati a 100 KB con flag `*_truncated`. `exit_code`
+è il codice di uscita reale del subprocess. `timed_out=true` (con
+`exit_code=-1`) se il subprocess ha sforato il timeout.
+
+**`exit_code != 0` e `timed_out` NON sollevano eccezione**: sono outcome
+legittimi (test che falliscono, build lenta). Il client riceve la response
+normale e decide cosa farne. Differenza intenzionale dai tool git, dove un
+exit-code anomalo è un errore vero.
+
+Eccezioni sollevate (event/outcome nel server audit tra parentesi):
+
+- `WriteNotAllowedError` — progetto con `write_enabled=false`
+  → `path.rejected` / `denied`.
+- `CommandRejectedError` — comando bloccato dalla deny list o non in
+  whitelist → `command.rejected` / `denied`.
+- `NoCommandConfiguredError` — `run_tests`/`lint`/`build` su progetto senza
+  il rispettivo `*_command` → `tool.<name>` / `error`.
+- `ExecutableNotFoundError` — `argv[0]` non in PATH (anche path relativi
+  tipo `./venv/bin/pytest`: `shutil.which` non risolve rispetto al cwd del
+  subprocess, configurare nomi binari nel PATH o path assoluti) →
+  `tool.<name>` / `error`.
+- `TimeoutOutOfRangeError` — `run_command(timeout=...)` fuori da `[1, 600]`
+  → `tool.run_command` / `error`.
+
+Audit `outcome_detail` per i tool exec (popolato solo su `outcome="success"`):
+
+- `completed` — subprocess terminato con `exit_code=0`.
+- `nonzero_exit` — subprocess terminato con `exit_code != 0`.
+- `timed_out` — subprocess interrotto per timeout.
+
+Non promosso a `outcome="error"`: il bridge ha eseguito il subprocess
+correttamente, il dettaglio descrive cosa è successo nel processo figlio.
+
+Audit `args_summary` per i tool exec:
+
+- `command` troncato a 500 char + `...[truncated]` se più lungo (protezione
+  log poisoning).
+- `stdout` e `stderr` riassunti via `summarize_command_output()` (head 500ch
+  + tail 500ch + `total_sha8` + `total_bytes` + `truncated`), non in chiaro.
+- `exit_code`, `duration_ms`, `timed_out`, `stdout_truncated`,
+  `stderr_truncated` propagati come field di sintesi.
 
 ## Sistema
 

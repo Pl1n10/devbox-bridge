@@ -16,12 +16,14 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from devbox_bridge.audit import AuditLogger, summarize_content
+from devbox_bridge.audit import AuditLogger, summarize_command_output, summarize_content
 from devbox_bridge.auth import Authenticator, AuthFailed, RateLimitExceeded, token_log_id
 from devbox_bridge.config import AppConfig, load_config
+from devbox_bridge.security.commands import CommandRejectedError
 from devbox_bridge.security.paths import PathSecurityError
-from devbox_bridge.tools import filesystem
+from devbox_bridge.tools import execution, filesystem
 from devbox_bridge.tools import git as git_tools
+from devbox_bridge.tools.execution import DEFAULT_RUN_COMMAND_TIMEOUT_SECONDS
 from devbox_bridge.tools.filesystem import GlobSecurityError, WriteNotAllowedError
 from devbox_bridge.tools.git import PushNotAllowedError
 
@@ -29,6 +31,17 @@ CONFIG_ENV_VAR = "DEVBOX_BRIDGE_CONFIG"
 DEFAULT_CONFIG_PATH = "config.yaml"
 MCP_HTTP_PATH = "/mcp"
 RETRY_AFTER_SECONDS = "60"
+
+# Tool exec — usati per popolare outcome_detail e per la sintesi audit di
+# stdout/stderr. Tenuto qui (non in tools/execution.py) perché è policy server.
+EXEC_TOOL_NAMES: frozenset[str] = frozenset(
+    {"run_command", "run_tests", "run_lint", "run_build"}
+)
+
+# Truncate del campo `command` in args_summary audit. Protezione log poisoning:
+# `run_command(... command="echo " + "A"*100000)` non deve generare 100KB di "A"
+# in ogni linea audit. Sopra a questa soglia: `cmd[:N] + "...[truncated]"`.
+COMMAND_AUDIT_TRUNCATE_CHARS: int = 500
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -120,6 +133,8 @@ class BearerAuthMiddleware:
 def _event_for_tool(tool_name: str, exc: BaseException | None) -> str:
     if isinstance(exc, (PathSecurityError, GlobSecurityError, WriteNotAllowedError)):
         return "path.rejected"
+    if isinstance(exc, CommandRejectedError):
+        return "command.rejected"
     return f"tool.{tool_name}"
 
 
@@ -131,10 +146,29 @@ def _outcome_for_exception(exc: BaseException) -> str:
             GlobSecurityError,
             WriteNotAllowedError,
             PushNotAllowedError,
+            CommandRejectedError,
         ),
     ):
         return "denied"
     return "error"
+
+
+def _outcome_detail_from_result(tool_name: str, result: Any) -> str | None:
+    """Granularità sub-outcome per i tool exec (subprocess è stato eseguito).
+
+    Valori: "completed" | "nonzero_exit" | "timed_out". None per gli altri tool.
+    Non promuove a outcome="error" — il bridge ha eseguito il subprocess
+    correttamente, il dettaglio descrive cosa è successo nel processo figlio.
+    """
+    if tool_name not in EXEC_TOOL_NAMES:
+        return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("timed_out"):
+        return "timed_out"
+    if result.get("exit_code") != 0:
+        return "nonzero_exit"
+    return "completed"
 
 
 def _summarize_tool_args(
@@ -145,10 +179,31 @@ def _summarize_tool_args(
     summary = dict(kwargs)
     if "content" in summary:
         summary["content"] = summarize_content(str(summary["content"]))
+    if "command" in summary:
+        cmd = str(summary["command"])
+        if len(cmd) > COMMAND_AUDIT_TRUNCATE_CHARS:
+            summary["command"] = (
+                cmd[:COMMAND_AUDIT_TRUNCATE_CHARS] + "...[truncated]"
+            )
     if result is not None and isinstance(result, dict):
         for key in ("bytes", "content_sha8", "created", "occurrences_replaced"):
             if key in result:
                 summary[key] = result[key]
+        if tool_name in EXEC_TOOL_NAMES:
+            for key in (
+                "exit_code",
+                "duration_ms",
+                "timed_out",
+                "stdout_truncated",
+                "stderr_truncated",
+            ):
+                if key in result:
+                    summary[key] = result[key]
+            # stdout/stderr riassunti (head+tail+sha) per non gonfiare l'audit.
+            if "stdout" in result:
+                summary["stdout"] = summarize_command_output(result["stdout"])
+            if "stderr" in result:
+                summary["stderr"] = summarize_command_output(result["stderr"])
     summary["tool"] = tool_name
     return summary
 
@@ -189,6 +244,7 @@ def _call_with_audit(
         tool=tool_name,
         args=_summarize_tool_args(tool_name, args, result),
         duration_ms=(time.monotonic() - started) * 1000,
+        outcome_detail=_outcome_detail_from_result(tool_name, result),
     )
     return result
 
@@ -400,6 +456,64 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
                 project,
                 {"project": project, "remote": remote},
                 lambda: git_tools.git_push(config, project, remote=remote),
+            ),
+        )
+
+    @mcp.tool()
+    async def run_command(
+        project: str,
+        command: str,
+        timeout: int = DEFAULT_RUN_COMMAND_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "run_command",
+                project,
+                {"project": project, "command": command, "timeout": timeout},
+                lambda: execution.run_command(
+                    config, project, command, timeout=timeout
+                ),
+            ),
+        )
+
+    @mcp.tool()
+    async def run_tests(project: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "run_tests",
+                project,
+                {"project": project},
+                lambda: execution.run_tests(config, project),
+            ),
+        )
+
+    @mcp.tool()
+    async def run_lint(project: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "run_lint",
+                project,
+                {"project": project},
+                lambda: execution.run_lint(config, project),
+            ),
+        )
+
+    @mcp.tool()
+    async def run_build(project: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "run_build",
+                project,
+                {"project": project},
+                lambda: execution.run_build(config, project),
             ),
         )
 
