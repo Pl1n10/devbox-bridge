@@ -4,8 +4,8 @@ MCP server custom che gira sulla devbox e si espone via Cloudflare Tunnel come c
 
 Espone tool sicuri su filesystem, git, esecuzione test/lint/build e introspezione di sistema, con auth bearer + rate limit + audit log.
 
-> Status: step 7 completato. Il server FastMCP parte su HTTP `/mcp` e registra
-> i tool filesystem. Git, execution, system, deploy finale e documentazione
+> Status: step 8 completato. Il server FastMCP parte su HTTP `/mcp` e registra
+> i tool filesystem e git. Execution, system, deploy finale e documentazione
 > completa restano negli step successivi.
 
 ## Quick start (dev locale)
@@ -41,8 +41,8 @@ docs/                 # SETUP / SECURITY / TOOLS
 ## Stato implementazione
 
 - Completati: config, auth/rate limit, path/env/command security, audit log,
-  tool filesystem, server FastMCP HTTP.
-- Pending: tool git, tool execution, tool system, deploy definitivo, docs finali.
+  tool filesystem, server FastMCP HTTP, tool git (read+write con backstop).
+- Pending: tool execution, tool system, deploy definitivo, docs finali.
 
 ## Deploy
 

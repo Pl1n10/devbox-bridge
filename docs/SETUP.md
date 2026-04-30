@@ -1,8 +1,9 @@
 # SETUP
 
 > Step-by-step per installare devbox-bridge sulla devbox e registrarlo come
-> custom connector su claude.ai. Stato step 7: setup locale funzionante; deploy
-> systemd/cloudflared definitivo ancora da completare nello step 11/12.
+> custom connector su claude.ai. Stato step 8: setup locale funzionante con
+> tool filesystem e git esposti; deploy systemd/cloudflared definitivo ancora
+> da completare nello step 11/12.
 
 ## 1. Dipendenze
 

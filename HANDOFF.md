@@ -5,8 +5,8 @@ Stato al **2026-04-29**.
 ## Stato git
 
 - **Branch:** `main`
-- **Ultimo commit:** step 8 (`tools/git.py` + wiring server) — TBD (commit dopo diff preview).
-- **Working tree:** modifiche locali step 8 non committate (`src/devbox_bridge/tools/git.py`, `src/devbox_bridge/server.py`, `tests/test_tools_git.py`, `tests/test_server.py`, `tests/conftest.py`, `HANDOFF.md`).
+- **Ultimo commit:** step 8 (`tools/git.py` + wiring server) — `4405a91`.
+- **Working tree:** clean.
 
 ## Step completati
 
@@ -22,7 +22,7 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
 - `1793358` — step 5: `audit.py` (logger thread-safe, rotazione+gzip, retention, sanitizzazione `<redacted>` / `<redacted-path>`)
 - `a8553a6` — step 6: `tools/filesystem.py` (read/write/patch/list/search). 6 tool con security path-validation + binary/UTF-8 strict + ripgrep wrapper + glob anti-traversal + write enforcement preventivo. 38 test, coverage 90%. ProjectConfig esteso con `max_read_bytes` (ceiling 50 MB). Branch difensivi non testati documentati in `FAILURES.md`.
 - `0671182` — step 7: `server.py` FastMCP funzionante per i 6 tool filesystem. Aggiunti middleware bearer auth/rate-limit, mapping 401/429, audit wrapper per success/error/denied, HTTP app su `/mcp`, e `tests/test_server.py` (12 test). Aggiornati README/docs/PM e aggiunto `gpt5.5-part.md` con il dettaglio degli interventi. Verifica locale: `237 passed, 1 skipped`; `mypy src` pulito; `ruff` pulito sui file step 7.
-- `TBD` — step 8: `tools/git.py` con 7 tool (4 read + 3 write). `git_status` su porcelain v1 -z, `git_diff` con filtro path validato via `resolve_within`, `git_log` (limit clampato a `MAX_LOG_LIMIT=200`), `git_branch_current` con fallback detached. Write: `git_create_branch` (validazione via `git check-ref-format`), `git_commit` (paths obbligatori, mai `-a`), `git_push` (richiede `allow_push`, no `--force`/`--mirror`/`--delete`/`--prune`/`--force-with-lease`/`--all`). Aggiornato `server.py` per registrare i 7 tool e mappare `PushNotAllowedError` come `outcome="denied"` (event `tool.git_push`). Conftest esteso con `tmp_git_repo`, `tmp_git_repo_with_origin` (bare locale) e fixture `config_git_{ro,rw,push}`. 32 test git + 2 test server. Verifica: `271 passed`; `mypy src` pulito; `ruff` pulito sui file step 8; coverage `tools/git.py` 90%.
+- `4405a91` — step 8: `tools/git.py` con 7 tool (4 read + 3 write). `git_status` su porcelain v1 -z, `git_diff` con filtro path validato via `resolve_within`, `git_log` (limit clampato a `MAX_LOG_LIMIT=200`), `git_branch_current` con fallback detached. Write: `git_create_branch` (validazione via `git check-ref-format`), `git_commit` (paths obbligatori, mai `-a`), `git_push` (richiede `allow_push`, no `--force`/`--mirror`/`--delete`/`--prune`/`--force-with-lease`/`--all`). Aggiornato `server.py` per registrare i 7 tool e mappare `PushNotAllowedError` come `outcome="denied"` (event `tool.git_push`). Conftest esteso con `tmp_git_repo`, `tmp_git_repo_with_origin` (bare locale) e fixture `config_git_{ro,rw,push}`. 32 test git + 2 test server. Verifica: `271 passed`; `mypy src` pulito; `ruff` pulito sui file step 8; coverage `tools/git.py` 90%.
 
 ## Step in corso
 

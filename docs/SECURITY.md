@@ -1,7 +1,9 @@
 # SECURITY — Threat model
 
-> Stato step 7: threat model e audit dei componenti implementati sono
-> documentati. La revisione finale andra completata dopo git/execution/system.
+> Stato step 8: threat model e audit dei componenti implementati sono
+> documentati, inclusi i backstop dei tool git (no `--force`/`--mirror`/
+> `--delete`/`--prune`/`--all`/`--force-with-lease`, push gated da
+> `allow_push`). La revisione finale andra completata dopo execution/system.
 
 ## Cosa devbox-bridge protegge
 
