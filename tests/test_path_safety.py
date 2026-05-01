@@ -12,6 +12,7 @@ from devbox_bridge.security.paths import (
     PathSecurityError,
     resolve_project_path,
     resolve_within,
+    resolve_within_any,
 )
 
 
@@ -173,3 +174,82 @@ def test_resolve_project_path_traversal(tmp_path: Path) -> None:
 
     with pytest.raises(PathSecurityError):
         resolve_project_path(cfg, "p", "../../etc/passwd")
+
+
+# --- resolve_within_any -----------------------------------------------------
+
+
+def test_resolve_within_any_match_first_root(tmp_path: Path) -> None:
+    root = tmp_path / "logs"
+    root.mkdir()
+    f = root / "a.log"
+    f.write_text("hello", encoding="utf-8")
+    resolved = resolve_within_any(f, [root])
+    assert resolved == f.resolve(strict=True)
+
+
+def test_resolve_within_any_match_second_root(tmp_path: Path) -> None:
+    root1 = tmp_path / "first"
+    root2 = tmp_path / "second"
+    root1.mkdir()
+    root2.mkdir()
+    f = root2 / "x.log"
+    f.write_text("ok", encoding="utf-8")
+    resolved = resolve_within_any(f, [root1, root2])
+    assert resolved == f.resolve(strict=True)
+
+
+def test_resolve_within_any_no_match_raises(tmp_path: Path) -> None:
+    root = tmp_path / "logs"
+    root.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    f = other / "x.log"
+    f.write_text("nope", encoding="utf-8")
+    with pytest.raises(PathSecurityError, match="non è dentro"):
+        resolve_within_any(f, [root])
+
+
+def test_resolve_within_any_relative_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "logs"
+    root.mkdir()
+    with pytest.raises(PathSecurityError, match="assoluto"):
+        resolve_within_any("relative.log", [root])
+
+
+def test_resolve_within_any_nonexistent_propagates(tmp_path: Path) -> None:
+    root = tmp_path / "logs"
+    root.mkdir()
+    nope = root / "missing.log"
+    with pytest.raises(FileNotFoundError):
+        resolve_within_any(nope, [root])
+
+
+def test_resolve_within_any_symlink_escaping_whitelist_rejected(
+    tmp_path: Path,
+) -> None:
+    """Symlink dentro la whitelist che punta FUORI deve essere rifiutato.
+    È il classico bypass: /var/log/devbox-bridge/x → /etc/passwd."""
+    root = tmp_path / "whitelisted"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "secret.txt"
+    target.write_text("secret", encoding="utf-8")
+    link = root / "innocent.log"
+    link.symlink_to(target)
+
+    with pytest.raises(PathSecurityError, match="non è dentro"):
+        resolve_within_any(link, [root])
+
+
+def test_resolve_within_any_skips_nonexistent_root(tmp_path: Path) -> None:
+    """Root inesistente NON solleva: viene saltato silenziosamente
+    (mountpoint smontato non rompe il sistema)."""
+    real = tmp_path / "real"
+    real.mkdir()
+    f = real / "a.log"
+    f.write_text("ok", encoding="utf-8")
+    nonexistent = tmp_path / "missing-mountpoint"
+    resolved = resolve_within_any(f, [nonexistent, real])
+    assert resolved == f.resolve(strict=True)

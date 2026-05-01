@@ -360,6 +360,73 @@ async def test_run_command_denied_audits_command_rejected(
 
 
 @pytest.mark.asyncio
+async def test_create_mcp_registers_system_tools(config_ro: AppConfig) -> None:
+    mcp = create_mcp(config_ro, _audit(config_ro))
+    tool_names = {tool.name for tool in await mcp.list_tools()}
+    assert {
+        "get_system_info",
+        "list_systemd_services",
+        "tail_log",
+        "read_journalctl",
+    } <= tool_names
+
+
+@pytest.mark.asyncio
+async def test_tail_log_denied_audited_as_path_rejected(
+    tmp_path: Path,
+    tmp_token_file: Path,
+) -> None:
+    """tail_log su path fuori whitelist → outcome=denied.
+    Read-tool denied → audit emesso (denied/error sempre auditati anche con
+    audit_reads=false)."""
+    from devbox_bridge.config import (
+        AppConfig,
+        AuditConfig,
+        AuthConfig,
+        ServerConfig,
+        SystemConfig,
+    )
+
+    log_dir = tmp_path / "wlog"
+    log_dir.mkdir()
+    cfg = AppConfig(
+        server=ServerConfig(log_dir=tmp_path / "logs"),
+        auth=AuthConfig(token_hash_file=tmp_token_file),
+        audit=AuditConfig(log_dir=tmp_path / "logs" / "audit"),
+        system=SystemConfig(log_paths_whitelist=[log_dir]),
+    )
+    log = _audit(cfg)
+    mcp = create_mcp(cfg, log)
+
+    # Path fuori dalla whitelist
+    with pytest.raises(ToolError):
+        await mcp.call_tool(
+            "tail_log",
+            {"path": "/etc/passwd"},
+        )
+
+    lines = _audit_lines(log)
+    assert len(lines) == 1
+    assert lines[0]["event"] == "path.rejected"
+    assert lines[0]["outcome"] == "denied"
+    assert lines[0]["error_class"] == "LogPathNotAllowedError"
+
+
+@pytest.mark.asyncio
+async def test_get_system_info_read_not_audited_by_default(
+    config_ro: AppConfig,
+) -> None:
+    """audit_reads=false (default) → tool.get_system_info success NON auditato."""
+    log = _audit(config_ro)
+    mcp = create_mcp(config_ro, log)
+
+    result = await mcp.call_tool("get_system_info", {})
+    assert "hostname" in result.structured_content
+    # audit_reads=false: read tool success non auditato.
+    assert _audit_lines(log) == []
+
+
+@pytest.mark.asyncio
 async def test_run_command_long_command_truncated_in_audit(
     config_factory: Any, tmp_project_root: Path
 ) -> None:

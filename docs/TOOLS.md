@@ -1,7 +1,7 @@
 # TOOLS — Reference dei tool MCP esposti
 
-> Stato step 9: i tool filesystem, git ed esecuzione sono registrati nel
-> server FastMCP e disponibili su HTTP `/mcp`. Sistema è ancora placeholder.
+> Stato step 10: i tool filesystem, git, esecuzione e sistema sono tutti
+> registrati nel server FastMCP e disponibili su HTTP `/mcp`.
 
 ## Transport
 
@@ -166,8 +166,109 @@ Audit `args_summary` per i tool exec:
 
 ## Sistema
 
-Placeholder step 10:
+Implementati e registrati. Tutti read-only. Niente `write_enabled` requirement
+(non scrivono filesystem). Eseguiti via `subprocess.run` con lista args (mai
+`shell=True`), `cwd=None` (system-wide), env sanitizzato via `security/env.py`,
+`stdin=DEVNULL`, timeout 30s.
 
-- `get_system_info()` — read
-- `list_systemd_services(filter='devbox-')` — read
-- `tail_log(path, lines=100)` — read
+**Read-only mode:** indipendente dal `write_enabled` dei progetti — questi
+tool guardano lo stato della macchina, non i progetti, quindi sono sempre
+accessibili (read).
+
+Tool:
+
+- `get_system_info()` — hostname, kernel, arch, uptime, load, memoria, disco.
+  Niente parametri. Resiliente a fallimenti parziali: se `df` o `uname` non
+  disponibili, il campo corrispondente resta a default (None / lista vuota)
+  ma il tool non solleva.
+- `list_systemd_services(name_filter=None)` — wrapper di
+  `systemctl list-units --type=service --all --no-pager --plain --no-legend`,
+  filtrato per substring sul nome unit. `name_filter=None` → usa
+  `system.systemd_filter_default` di config (default `devbox-`); stringa
+  vuota → nessun filtro (tutte le unit).
+- `tail_log(path, lines=100)` — `tail -n N <path>`. `path` deve essere
+  assoluto, esistere ed essere dentro UNO dei root in
+  `system.log_paths_whitelist`.
+- `read_journalctl(unit, lines=100)` — `journalctl -u <unit> -n N --no-pager`.
+  `unit` deve matchare regex stretta E essere in
+  `system.systemd_unit_whitelist`. Su Ubuntu, l'utente del bridge deve essere
+  in gruppo `adm` o `systemd-journal` per leggere unit system-wide.
+
+Schema response `tail_log` / `read_journalctl`:
+
+```json
+{
+  "source": "/var/log/devbox-bridge/audit.log",
+  "lines_requested": 100,
+  "exit_code": 0,
+  "content": "...",
+  "content_truncated": false
+}
+```
+
+Output troncato a 512 KB (metà di un context window 200K-token). Se il log
+è più grosso, iterare con `lines` minore.
+
+Schema response `list_systemd_services`:
+
+```json
+{
+  "filter": "devbox-",
+  "exit_code": 0,
+  "services": [
+    {"unit": "devbox-bridge.service", "load": "loaded", "active": "active",
+     "sub": "running", "description": "..."}
+  ]
+}
+```
+
+Schema response `get_system_info`:
+
+```json
+{
+  "hostname": "devbox",
+  "kernel": "6.8.0-110-generic",
+  "arch": "x86_64",
+  "uptime_seconds": 213978,
+  "load": {"1": 0.5, "5": 0.4, "15": 0.3},
+  "memory_bytes": {"total": 16655495168, "available": ..., "free": ...},
+  "disk": [
+    {"source": "/dev/...", "size": "98G", "used": "14G", "avail": "80G",
+     "use_pct": "15%", "mount": "/"}
+  ]
+}
+```
+
+Note schema:
+
+- `uptime_seconds` è `int` (no rumore decimale nei log audit).
+- `memory_bytes` ritorna byte (kB di `/proc/meminfo` × 1024 una volta sola
+  alla lettura). Più chiaro al consumer di `memory_kb` ambiguo.
+- I campi `disk[]` sono **intenzionalmente human-readable** (output `df -h`):
+  `size`/`used`/`avail` sono stringhe tipo `"98G"`, `use_pct` come `"15%"`.
+  **Non parsare numericamente.** Se serviranno byte raw, in futuro si
+  aggiungerà un `disk_bytes` separato.
+
+Eccezioni sollevate (event/outcome nel server audit tra parentesi):
+
+- `LogPathNotAllowedError` — path assoluto fuori da
+  `system.log_paths_whitelist` (incluso symlink dentro la whitelist che
+  punta fuori). → `path.rejected` / `denied`.
+- `LogPathNotFoundError` — path whitelistato ma file non esiste. →
+  `tool.tail_log` / `error`.
+- `JournalctlUnitNotAllowedError` — unit non in whitelist o nome non valido.
+  → `tool.read_journalctl` / `denied`.
+- `FilterPatternError` — `name_filter` di `list_systemd_services` con
+  caratteri non ammessi (defense-in-depth contro injection). →
+  `tool.list_systemd_services` / `error`.
+- `LinesOutOfRangeError` — `lines` fuori da `[1, 5000]`. → `error`.
+- `TailNotAvailableError` / `SystemctlNotAvailableError` /
+  `JournalctlNotAvailableError` — binario assente nel PATH. → `error`.
+
+**Audit policy:** read tool con `outcome="success"` non auditati di default
+(`audit_reads=false`). Read tool con `outcome="denied"` o `"error"` sono
+**sempre auditati** — un denial è materiale forense, non rumore.
+
+Whitelist log/unit configurate in `config.yaml` sotto `system:` (vedi
+`SECURITY.md` per la semantica fail-secure delle whitelist esplicitamente
+vuote vs sezione omessa).

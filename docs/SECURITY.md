@@ -1,9 +1,9 @@
 # SECURITY — Threat model
 
-> Stato step 8: threat model e audit dei componenti implementati sono
-> documentati, inclusi i backstop dei tool git (no `--force`/`--mirror`/
-> `--delete`/`--prune`/`--all`/`--force-with-lease`, push gated da
-> `allow_push`). La revisione finale andra completata dopo execution/system.
+> Stato step 10: threat model e audit di tutti i componenti implementati
+> sono documentati. Inclusi: backstop dei tool git (step 8), gating exec su
+> `write_enabled` + deny list su comandi configurati (step 9), whitelist
+> path/unit per i tool sistema con semantica fail-secure (step 10).
 
 ## Cosa devbox-bridge protegge
 
@@ -255,6 +255,90 @@ pusha tag autenticato, test che parlano con un'API esterna sandbox).
 viene loggata come warning `env.passthrough.secret_match` con il nome della
 var. Il passthrough resta valido — il warning serve solo a tracciare l'uso di
 una deroga per review futura.
+
+## Whitelist system tools — fail-secure su lista esplicitamente vuota
+
+I tool read-only di sistema (`tail_log`, `read_journalctl`,
+`list_systemd_services`) sono validati contro whitelist in
+`config.system`. Le tre liste hanno semantica differenziata fra "sezione
+omessa" e "lista esplicitamente vuota":
+
+```yaml
+# Caso A: sezione `system:` interamente omessa (o `system: {}`)
+# → default permissivi onboarding-friendly
+#   log_paths_whitelist:    [/var/log/devbox-bridge]
+#   systemd_unit_whitelist: [devbox-bridge.service]
+#   systemd_filter_default: "devbox-"
+
+# Caso B: lista esplicitamente vuota
+system:
+  log_paths_whitelist: []         # → NESSUN path accessibile
+  systemd_unit_whitelist: []      # → NESSUNA unit accessibile
+```
+
+Il default permissivo si applica **solo** in assenza totale di
+configurazione (Caso A): è una scelta di onboarding. Una volta che
+l'operatore ha messo mano alla sezione `system:`, una whitelist `[]`
+viene rispettata letteralmente come "fail-secure: nessuna risorsa
+accessibile". Riempire automaticamente una lista vuota in YAML
+sarebbe fail-open — anti-pattern.
+
+I default sono definiti come letterali in `config.py` solo
+(`DEFAULT_LOG_PATHS_WHITELIST`, `DEFAULT_SYSTEMD_UNIT_WHITELIST`,
+`DEFAULT_SYSTEMD_FILTER`); single source of truth.
+
+### Path validation
+
+`tail_log(path)` passa per `security.paths.resolve_within_any(path,
+allowed_roots)`:
+
+- `path` deve essere **assoluto** (path relativi rifiutati con
+  `PathSecurityError`).
+- `path` deve **esistere** (`Path.resolve(strict=True)` propaga
+  `FileNotFoundError`, distinto da "fuori whitelist").
+- Tutti i symlink lungo il path candidato vengono **risolti prima del
+  confronto**: un symlink dentro la whitelist che punta fuori (es.
+  `/var/log/devbox-bridge/x → /etc/passwd`) viene rifiutato.
+- Ordine di `allowed_roots` **non è semanticamente significativo**: il
+  path è valido se cade in almeno un root, indipendentemente dalla
+  posizione di questo nella lista. Sovrapposizioni (es. `/var/log` e
+  `/var/log/devbox-bridge`) restano consistenti.
+- Root inesistenti vengono **saltati silenziosamente**: smontare un
+  mountpoint non rompe l'intera validazione.
+
+### Unit validation per journalctl
+
+`read_journalctl(unit)` applica due gate:
+
+1. `unit` deve matchare regex `^[A-Za-z0-9._@:-]{1,64}$` — defense-in-depth
+   contro injection in argomenti CLI (anche se `subprocess.run` è
+   `shell=False`). Lo stesso pattern vale per `name_filter` di
+   `list_systemd_services`.
+2. `unit` deve essere in `system.systemd_unit_whitelist`.
+
+### Permessi di lettura del journal
+
+L'utente che esegue il bridge deve avere accesso al journal system-wide
+per `read_journalctl` su unit di sistema. Su Ubuntu, l'appartenenza ai
+gruppi **`adm`** o **`systemd-journal`** è sufficiente. Verifica:
+
+```bash
+journalctl -u systemd-journald.service -n 5
+```
+
+Se ritorna entries → OK. Se ritorna "No journal files were found" o "Hint:
+You are currently not seeing messages from other users" → aggiungere
+l'utente a `adm` (`sudo usermod -aG adm <user>` + nuovo login). Lo step 11
+(`install.sh`) include questo check come fail-fast pre-deploy.
+
+### Modello PII / single-tenant
+
+I tool sistema espongono info **non sensibili nel modello single-tenant
+attuale**: hostname, kernel version, df totals, lista servizi systemd,
+contenuto file di log whitelistati. Un eventuale refactoring multi-tenant
+richiederebbe filtering aggiuntivo (hide-mounts per tenant,
+namespace-scoped systemctl, log path partition). Out of scope per l'MVP,
+documentato come commento in `tools/system.py`.
 
 ## Progetti two-key — EvoTrader e Robo-PAC ETF
 

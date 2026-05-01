@@ -28,6 +28,7 @@ Limiti noti:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from devbox_bridge.config import AppConfig
@@ -86,3 +87,56 @@ def resolve_project_path(config: AppConfig, project: str, path: str | Path) -> P
     """
     proj = config.project(project)
     return resolve_within(proj.path, path)
+
+
+def resolve_within_any(
+    candidate: str | Path,
+    allowed_roots: Iterable[Path],
+) -> Path:
+    """Risolve `candidate` (assoluto) e verifica che cada DENTRO almeno uno
+    dei root in `allowed_roots`. Usata da tools/system.tail_log per validare
+    path assoluti contro una whitelist di directory.
+
+    Differenze con resolve_within():
+      - candidate DEVE essere assoluto (PathSecurityError altrimenti).
+      - candidate DEVE esistere (Path.resolve(strict=True)). Se non esiste,
+        propaga FileNotFoundError (il chiamante lo distingue da "fuori
+        whitelist" — semantica diversa: 'log non esiste' vs 'log non
+        autorizzato').
+      - L'ordine di allowed_roots NON è semanticamente significativo: il
+        path è valido se cade in almeno un root, indipendentemente dalla
+        posizione nella lista. "Primo match vince" è dettaglio
+        implementativo (early return per efficienza). Sovrapposizioni di
+        root (es. /var/log e /var/log/devbox-bridge) restano consistenti.
+      - Symlink: la risoluzione strict=True sul candidato segue tutti i
+        symlink lungo il path PRIMA del confronto. Quindi un symlink
+        dentro un root whitelistato che punta fuori (es.
+        /var/log/devbox-bridge/x → /etc/passwd) viene rifiutato.
+
+    Roots inesistenti vengono SALTATI silenziosamente (non sollevano):
+    rendere la whitelist robusta a un mountpoint smontato è preferibile a
+    rompere tutti i tool quando un singolo root non è più disponibile.
+    """
+    cand = Path(candidate)
+    if not cand.is_absolute():
+        raise PathSecurityError(
+            f"path '{candidate}' deve essere assoluto"
+        )
+
+    target_resolved = cand.resolve(strict=True)  # propaga FileNotFoundError
+
+    for root in allowed_roots:
+        try:
+            root_resolved = Path(root).resolve(strict=True)
+        except FileNotFoundError:
+            continue
+        try:
+            target_resolved.relative_to(root_resolved)
+            return target_resolved
+        except ValueError:
+            continue
+
+    raise PathSecurityError(
+        f"path '{candidate}' (risolto a '{target_resolved}') non è dentro "
+        f"alcuna whitelist root"
+    )

@@ -142,12 +142,87 @@ class ProjectConfig(BaseModel):
         return self
 
 
+# Default sensati per SystemConfig — single source of truth: NON duplicare
+# in tools/system.py. Cambia qui se devi cambiare il default permissivo.
+# Semantica fail-secure: questi default si applicano SOLO se l'utente ha
+# omesso interamente la sezione `system:` (o l'ha lasciata `system: {}`).
+# Una whitelist esplicitamente vuota in YAML (`log_paths_whitelist: []`) NON
+# riceve i default — viene rispettata come "nessun path accessibile".
+DEFAULT_LOG_PATHS_WHITELIST: tuple[Path, ...] = (Path("/var/log/devbox-bridge"),)
+DEFAULT_SYSTEMD_UNIT_WHITELIST: tuple[str, ...] = ("devbox-bridge.service",)
+DEFAULT_SYSTEMD_FILTER: str = "devbox-"
+
+# Regex per nomi unit systemd. Vale anche per il filter di list_systemd_services
+# (che è un substring sul nome unit, quindi ha lo stesso alfabeto ammesso).
+# Caratteri ammessi: alfanumerico, `_`, `-`, `.`, `@`, `:`. Range conservativo,
+# nessun whitespace o shell metachar.
+_SYSTEMD_NAME_RE = re.compile(r"^[A-Za-z0-9._@:-]{1,64}$")
+
+
+class SystemConfig(BaseModel):
+    """Whitelist per i tool read-only di sistema (tools/system.py).
+
+    Comportamento "presente ma vuoto":
+      - sezione `system:` interamente omessa → default permissivo
+        (DEFAULT_LOG_PATHS_WHITELIST, DEFAULT_SYSTEMD_UNIT_WHITELIST).
+      - sezione `system:` presente con whitelist esplicitamente `[]` →
+        fail-secure (zero path/unit accessibili). Scelta deliberata
+        dell'operatore = rispettata letteralmente.
+
+    Distinzione esplicita: i default permissivi sono onboarding-friendly
+    ma una whitelist svuotata è una decisione di sicurezza dell'operatore.
+    Il default che riempie automaticamente una lista vuota sarebbe
+    fail-open — anti-pattern.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    log_paths_whitelist: list[Path] = Field(
+        default_factory=lambda: list(DEFAULT_LOG_PATHS_WHITELIST)
+    )
+    systemd_unit_whitelist: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_SYSTEMD_UNIT_WHITELIST)
+    )
+    systemd_filter_default: str = Field(default=DEFAULT_SYSTEMD_FILTER)
+
+    @field_validator("log_paths_whitelist")
+    @classmethod
+    def _log_paths_absolute(cls, v: list[Path]) -> list[Path]:
+        out: list[Path] = []
+        for i, p in enumerate(v):
+            out.append(_require_absolute(p, f"system.log_paths_whitelist[{i}]"))
+        return out
+
+    @field_validator("systemd_unit_whitelist")
+    @classmethod
+    def _unit_names_valid(cls, v: list[str]) -> list[str]:
+        for name in v:
+            if not _SYSTEMD_NAME_RE.fullmatch(name):
+                raise ValueError(
+                    f"system.systemd_unit_whitelist '{name}' non è un nome unit valido"
+                )
+        return v
+
+    @field_validator("systemd_filter_default")
+    @classmethod
+    def _filter_default_valid(cls, v: str) -> str:
+        # Stringa vuota = "nessun filtro" → ammessa.
+        if v == "":
+            return v
+        if not _SYSTEMD_NAME_RE.fullmatch(v):
+            raise ValueError(
+                f"system.systemd_filter_default '{v}' non è un pattern valido"
+            )
+        return v
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    system: SystemConfig = Field(default_factory=SystemConfig)
     projects: dict[ProjectName, ProjectConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")

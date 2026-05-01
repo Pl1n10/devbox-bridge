@@ -77,6 +77,7 @@ AUDITED_READ_EVENTS: frozenset[str] = frozenset(
         "tool.git_log",
         "tool.git_branch_current",
         "tool.tail_log",
+        "tool.read_journalctl",
         "tool.list_systemd_services",
         "tool.get_system_info",
     }
@@ -292,8 +293,16 @@ class AuditLogger:
         outcome_detail: str | None = None,
     ) -> None:
         """Logga un evento di audit. Il `tool` può essere None per eventi
-        non-tool (auth.failed, command.rejected, ...)."""
-        if not should_audit(event, audit_reads=self._audit_reads):
+        non-tool (auth.failed, command.rejected, ...).
+
+        Policy: outcome `denied`/`error` viene SEMPRE auditato a prescindere
+        da `audit_reads`. Anche per i read tool, un denial o un errore deve
+        essere tracciabile (è esattamente quello che ti serve durante un
+        incident review). Solo `success` rispetta la policy `should_audit`.
+        """
+        if outcome == "success" and not should_audit(
+            event, audit_reads=self._audit_reads
+        ):
             return
 
         sanitized = sanitize_args(dict(args)) if args else None

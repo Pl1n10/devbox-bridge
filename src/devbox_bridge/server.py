@@ -21,11 +21,16 @@ from devbox_bridge.auth import Authenticator, AuthFailed, RateLimitExceeded, tok
 from devbox_bridge.config import AppConfig, load_config
 from devbox_bridge.security.commands import CommandRejectedError
 from devbox_bridge.security.paths import PathSecurityError
-from devbox_bridge.tools import execution, filesystem
+from devbox_bridge.tools import execution, filesystem, system
 from devbox_bridge.tools import git as git_tools
 from devbox_bridge.tools.execution import DEFAULT_RUN_COMMAND_TIMEOUT_SECONDS
 from devbox_bridge.tools.filesystem import GlobSecurityError, WriteNotAllowedError
 from devbox_bridge.tools.git import PushNotAllowedError
+from devbox_bridge.tools.system import (
+    DEFAULT_LOG_LINES,
+    JournalctlUnitNotAllowedError,
+    LogPathNotAllowedError,
+)
 
 CONFIG_ENV_VAR = "DEVBOX_BRIDGE_CONFIG"
 DEFAULT_CONFIG_PATH = "config.yaml"
@@ -131,7 +136,15 @@ class BearerAuthMiddleware:
 
 
 def _event_for_tool(tool_name: str, exc: BaseException | None) -> str:
-    if isinstance(exc, (PathSecurityError, GlobSecurityError, WriteNotAllowedError)):
+    if isinstance(
+        exc,
+        (
+            PathSecurityError,
+            GlobSecurityError,
+            WriteNotAllowedError,
+            LogPathNotAllowedError,
+        ),
+    ):
         return "path.rejected"
     if isinstance(exc, CommandRejectedError):
         return "command.rejected"
@@ -147,6 +160,8 @@ def _outcome_for_exception(exc: BaseException) -> str:
             WriteNotAllowedError,
             PushNotAllowedError,
             CommandRejectedError,
+            LogPathNotAllowedError,
+            JournalctlUnitNotAllowedError,
         ),
     ):
         return "denied"
@@ -514,6 +529,62 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
                 project,
                 {"project": project},
                 lambda: execution.run_build(config, project),
+            ),
+        )
+
+    @mcp.tool()
+    async def get_system_info() -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "get_system_info",
+                None,
+                {},
+                lambda: system.get_system_info(),
+            ),
+        )
+
+    @mcp.tool()
+    async def list_systemd_services(
+        name_filter: str | None = None,
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "list_systemd_services",
+                None,
+                {"name_filter": name_filter},
+                lambda: system.list_systemd_services(config, name_filter=name_filter),
+            ),
+        )
+
+    @mcp.tool()
+    async def tail_log(path: str, lines: int = DEFAULT_LOG_LINES) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "tail_log",
+                None,
+                {"path": path, "lines": lines},
+                lambda: system.tail_log(config, path, lines=lines),
+            ),
+        )
+
+    @mcp.tool()
+    async def read_journalctl(
+        unit: str, lines: int = DEFAULT_LOG_LINES
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "read_journalctl",
+                None,
+                {"unit": unit, "lines": lines},
+                lambda: system.read_journalctl(config, unit, lines=lines),
             ),
         )
 
