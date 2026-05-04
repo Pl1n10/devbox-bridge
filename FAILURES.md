@@ -33,3 +33,29 @@ Inoltre lasciate scoperte ma di natura analoga (OSError edge che NON sono input 
 **Alternativa adottata:** copertura al **90%** (target del brief) con i 38 test che coprono tutti i percorsi di security (path traversal, write enforcement, binary refuse, encoding strict, glob escape, ripgrep mancante) e tutti gli input utente legittimi (file inesistente, directory passata come file, max_matches=0, glob vuoto/home-relative). Le 19 righe scoperte sono error-handling difensivo, non gap funzionali.
 
 Se in futuro arriva un bug dal campo che riguarda una di queste linee, **allora** vale la pena scrivere il test (regressione mirata). Senza un caso reale, no.
+
+### 2026-05-04 — step 11: scartate due alternative all'approccio "ACL chirurgiche per progetto"
+
+Per dare all'utente di servizio `devbox-bridge` accesso ai progetti in `/home/hypn0/projects/*` ho valutato tre opzioni. La (1) ACL chirurgiche è quella adottata in `deploy/install.sh`. Le altre due sono state scartate esplicitamente — annoto qui il perché così non vengano riproposte tra mesi come "scorciatoia che sembra innocua".
+
+**Opzione (2) — aggiungere `devbox-bridge` al gruppo `hypn0`.**
+
+**Approccio scartato:** `usermod -aG hypn0 devbox-bridge` + `chmod g+rX` su `/home/hypn0/projects`. Una sola riga, "tanto i progetti sono già lì".
+
+**Perché non va bene:** rompe il principio di least privilege. Membership in `hypn0` dà accesso *all'intera home* di hypn0, non solo ai progetti opt-in del config: `~/.ssh/`, `~/.config/`, eventuali `.env` di progetti **non in `config.yaml`**, file di sessione, ecc. È esattamente il tipo di "scorciatoia che sembra innocua" che il threat model del bridge è nato per evitare. Una volta concessa la membership non c'è più separazione fra progetti opt-in e tutto il resto della home.
+
+**Alternativa adottata:** ACL `setfacl -R -m u:devbox-bridge:r-X` (o `rwX` con default ACL se `write_enabled: true`) per **ogni** path elencato in `config.yaml`, applicate dall'installer. Il bridge non ha alcun accesso al resto di `/home/hypn0/`.
+
+---
+
+**Opzione (3) — far girare il servizio come `hypn0`.**
+
+**Approccio scartato:** `User=hypn0` nella unit, niente service user dedicato. "Tanto è la stessa devbox, le ACL sono inutili".
+
+**Perché non va bene:** viola il brief (che chiede esplicitamente "non root, non hypn0") ma soprattutto **annulla mezzo systemd hardening**:
+
+- `ProtectHome=read-only` diventa irrilevante se l'utente del servizio è il proprietario di `/home/hypn0/` — il read-only protegge dai tentativi di scrivere fuori contesto, ma se sei tu l'owner stai modificando legittimamente la tua home.
+- Si perde la separazione che permette di dire *"il bridge non può toccare nulla fuori dai progetti opt-in"* con una **garanzia kernel-level**, non solo applicativa. Un eventuale baco che bypassa il check `write_enabled` finisce a scrivere file in `~/.bashrc`, `~/.gitconfig` o ovunque.
+- Cancella `MemoryDenyWriteExecute`, `RestrictSUIDSGID` e gli altri strict come strumenti di confinamento utili: tanto il processo gira come l'utente "vero" della macchina.
+
+**Alternativa adottata:** utente di servizio dedicato `devbox-bridge` (system, no-login) + ACL chirurgiche + drop-in `ReadWritePaths=` generato dall'installer da `config.yaml`. Difesa applicativa (check `write_enabled` nei tool) e difesa kernel (ACL + namespace systemd) sono **in serie**, non ridondanti — un baco a un layer non basta a bucare l'altro.

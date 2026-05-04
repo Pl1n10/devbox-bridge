@@ -1,24 +1,38 @@
-# TODO (step 11): docker-compose definitivo.
+# docker-compose.yml — alternativa containerizzata al deploy systemd.
 #
-# services:
-#   devbox-bridge:
-#     build:
-#       context: ..
-#       dockerfile: deploy/Dockerfile
-#     container_name: devbox-bridge
-#     restart: unless-stopped
-#     ports:
-#       - "127.0.0.1:8765:8765"
-#     volumes:
-#       - /etc/devbox-bridge:/etc/devbox-bridge:ro
-#       - /var/log/devbox-bridge:/var/log/devbox-bridge
-#       # i mount dei progetti vanno aggiunti per progetto, ro o rw a seconda di write_enabled.
-#       # Esempio (decommenta e replica per ogni progetto attivo):
-#       # - /home/hypn0/projects/devbox-bridge:/home/hypn0/projects/devbox-bridge:ro
-#     read_only: true
-#     tmpfs:
-#       - /tmp
-#     security_opt:
-#       - no-new-privileges:true
-#     cap_drop:
-#       - ALL
+# Default sulla devbox è il systemd unit (deploy/devbox-bridge.service).
+# Questo compose è utile per test/staging, dev locale, o se vuoi isolamento
+# più stretto via container runtime al posto del namespace systemd.
+#
+# Token e config vivono in /etc/devbox-bridge sul host (creati da
+# install.sh) anche per il deploy compose-based.
+#
+# Mount dei progetti: una linea per progetto in `volumes`, `:ro` di default,
+# `:rw` SOLO per i progetti con `write_enabled: true` in config.yaml.
+
+services:
+  devbox-bridge:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: devbox-bridge:local
+    container_name: devbox-bridge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # Config + token hash file (read-only: il container non scrive qui).
+      - /etc/devbox-bridge:/etc/devbox-bridge:ro
+      # App log + audit log (read-write: owner UID 9876 lato host).
+      - /var/log/devbox-bridge:/var/log/devbox-bridge
+      # Progetti — decommenta e replica per ogni progetto attivo:
+      # - /home/hypn0/projects/devbox-bridge:/home/hypn0/projects/devbox-bridge:ro
+      # - /home/hypn0/projects/<altro>:/home/hypn0/projects/<altro>:rw
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "9876:9876"
