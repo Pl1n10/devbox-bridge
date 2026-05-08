@@ -376,21 +376,85 @@ I default sono definiti come letterali in `config.py` solo
 ### Path validation
 
 `tail_log(path)` passa per `security.paths.resolve_within_any(path,
-allowed_roots)`:
+allowed_roots)`. Il check è **whitelist → esistenza** in quest'ordine:
 
 - `path` deve essere **assoluto** (path relativi rifiutati con
   `PathSecurityError`).
-- `path` deve **esistere** (`Path.resolve(strict=True)` propaga
-  `FileNotFoundError`, distinto da "fuori whitelist").
-- Tutti i symlink lungo il path candidato vengono **risolti prima del
-  confronto**: un symlink dentro la whitelist che punta fuori (es.
-  `/var/log/devbox-bridge/x → /etc/passwd`) viene rifiutato.
+- (a) `Path.resolve(strict=False)` normalizza `..` e segue symlink
+  intermedi che esistono. Il path normalizzato viene matchato contro la
+  whitelist. **Fuori whitelist → `PathSecurityError`**, anche se il
+  file non esiste (vedi sotto, "info-leak").
+- (b) Solo se la whitelist matcha, viene fatto `Path.resolve(strict=True)`
+  per verificare l'esistenza. **Dentro whitelist ma inesistente →
+  `FileNotFoundError`** (mappato su `LogPathNotFoundError`).
+- (c) Defense-in-depth post-`strict=True`: il path effettivamente
+  risolto viene **re-validato** contro la whitelist. Riduce la
+  superficie TOCTOU contro symlink sostituiti tra il check (a) e
+  l'`open()` del subprocess `tail`.
 - Ordine di `allowed_roots` **non è semanticamente significativo**: il
   path è valido se cade in almeno un root, indipendentemente dalla
   posizione di questo nella lista. Sovrapposizioni (es. `/var/log` e
   `/var/log/devbox-bridge`) restano consistenti.
 - Root inesistenti vengono **saltati silenziosamente**: smontare un
   mountpoint non rompe l'intera validazione.
+
+#### Perché l'ordine whitelist → esistenza
+
+Se `resolve_within_any` controllasse l'esistenza prima della whitelist,
+un attaccante autenticato distinguerebbe "path fuori whitelist" da
+"path inesistente" osservando il tipo di errore — info-leak debole ma
+asimmetrico (può enumerare path applicativi che NON dovrebbe sapere
+esistere). Con il check whitelist-first, un path fuori whitelist
+solleva sempre `PathSecurityError` indipendentemente dall'esistenza
+reale del file. L'attaccante può solo osservare l'esistenza di file
+DENTRO la whitelist — superficie minima e attesa.
+
+### list_systemd_services — asimmetria intenzionale rispetto a read_journalctl
+
+A differenza di `read_journalctl` e `tail_log`, `list_systemd_services`
+**non ha una whitelist hard di unit**. Ha solo un substring filter
+opzionale (`name_filter`, default `system.systemd_filter_default =
+"devbox-"`), che il client può svuotare passando `name_filter=""` per
+ottenere l'enumerazione completa di tutte le service unit del sistema
+(~150 entry su Ubuntu Server tipico).
+
+Asimmetria difendibile:
+
+- **`list_systemd_services` restituisce solo metadati pubblici**: nome
+  unit, `load`/`active`/`sub` state, descrizione. Niente content.
+  L'operatore con accesso shell ottiene gli stessi dati con
+  `systemctl list-units`. Per il single-tenant attuale non aggiunge
+  superficie di disclosure rispetto a quanto già accessibile.
+- **`read_journalctl` legge i log applicativi**: questi possono contenere
+  PII, secret loggati per errore, query DB, ecc. Per questo è whitelist
+  hard.
+- **`tail_log` legge file di log arbitrari**: stesso ragionamento. Whitelist
+  hard sui root permessi.
+
+Se un futuro use case (es. multi-tenant, audit shipping verso SIEM
+esterno) richiedesse di nascondere i nomi unit, andrebbe aggiunto un
+`systemd_unit_visible` whitelist analogo a `systemd_unit_whitelist` per
+journal. Out of scope MVP.
+
+### PathSecurityError vs PermissionError — distinguere il livello d'errore
+
+Un client che riceve un errore dal bridge può vedere un wrapping
+`ToolError` con messaggio. La distinzione tra:
+
+- `PathSecurityError` → `event="path.rejected"`, `outcome="denied"`:
+  il bridge ha rifiutato la richiesta a livello applicativo (whitelist,
+  traversal, symlink escape).
+- `PermissionError`/`OSError` (errno 13 EACCES) → `event="tool.<name>"`,
+  `outcome="error"`: il bridge ha provato l'I/O e il kernel ha
+  risposto EACCES (tipicamente perché il service user non può
+  attraversare un parent path).
+
+Sono **percorsi d'errore diversi ma proprietà di sicurezza
+equivalente**: in entrambi i casi il dato non viene esfiltrato. EACCES
+indica però un bug operativo (mancanza di traversal `--x` ACL su un
+parent), non una vulnerabilità del bridge. Vedi `SETUP.md → install.sh`
+per il fix least-privilege con `setfacl -m u:devbox-bridge:--x` sui
+parent path dei progetti.
 
 ### Unit validation per journalctl
 

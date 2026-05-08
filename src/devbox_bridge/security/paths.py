@@ -99,19 +99,30 @@ def resolve_within_any(
 
     Differenze con resolve_within():
       - candidate DEVE essere assoluto (PathSecurityError altrimenti).
-      - candidate DEVE esistere (Path.resolve(strict=True)). Se non esiste,
-        propaga FileNotFoundError (il chiamante lo distingue da "fuori
-        whitelist" — semantica diversa: 'log non esiste' vs 'log non
-        autorizzato').
+      - L'ordine di validazione è: whitelist PRIMA, esistenza DOPO. Quindi
+        un path fuori whitelist solleva PathSecurityError anche se non
+        esiste, evitando un info-leak debole ("path X non esiste" vs
+        "path X fuori whitelist" → discriminerebbe l'esistenza di file
+        fuori whitelist).
+      - Se candidato è dentro la whitelist ma non esiste, propaga
+        FileNotFoundError: il chiamante distingue "log non autorizzato"
+        (PathSecurityError) da "log autorizzato ma non presente"
+        (FileNotFoundError → mappato di solito su LogPathNotFoundError).
       - L'ordine di allowed_roots NON è semanticamente significativo: il
         path è valido se cade in almeno un root, indipendentemente dalla
         posizione nella lista. "Primo match vince" è dettaglio
         implementativo (early return per efficienza). Sovrapposizioni di
         root (es. /var/log e /var/log/devbox-bridge) restano consistenti.
-      - Symlink: la risoluzione strict=True sul candidato segue tutti i
-        symlink lungo il path PRIMA del confronto. Quindi un symlink
-        dentro un root whitelistato che punta fuori (es.
-        /var/log/devbox-bridge/x → /etc/passwd) viene rifiutato.
+      - Symlink: doppio check.
+          (a) Pre-esistenza: cand.resolve(strict=False) normalizza '..' e
+              segue i symlink intermedi che ESISTONO. Un symlink che esce
+              dalla whitelist viene rilevato qui.
+          (b) Post-esistenza: cand.resolve(strict=True) viene rifatto sul
+              path effettivamente esistente; viene re-validato contro la
+              whitelist (defense-in-depth contro race condition / symlink
+              sostituiti tra il check (a) e l'open() del subprocess —
+              non chiude la finestra TOCTOU completamente, ma riduce la
+              superficie).
 
     Roots inesistenti vengono SALTATI silenziosamente (non sollevano):
     rendere la whitelist robusta a un mountpoint smontato è preferibile a
@@ -123,20 +134,44 @@ def resolve_within_any(
             f"path '{candidate}' deve essere assoluto"
         )
 
-    target_resolved = cand.resolve(strict=True)  # propaga FileNotFoundError
-
+    # Materializza i root resolved una volta sola per riuso nei due check.
+    roots_resolved: list[Path] = []
     for root in allowed_roots:
         try:
-            root_resolved = Path(root).resolve(strict=True)
+            roots_resolved.append(Path(root).resolve(strict=True))
         except FileNotFoundError:
             continue
+
+    # (a) Check whitelist con resolve non-strict. Normalizza '..' e segue
+    #     symlink intermedi esistenti; non solleva su path finale inesistente.
+    target_normalized = cand.resolve(strict=False)
+    if not _is_under_any(target_normalized, roots_resolved):
+        raise PathSecurityError(
+            f"path '{candidate}' (risolto a '{target_normalized}') non è "
+            f"dentro alcuna whitelist root"
+        )
+
+    # Verifica esistenza solo dopo aver passato la whitelist: chi chiama
+    # con un path fuori whitelist non scopre se un altro file esiste
+    # nel sistema.
+    target_strict = cand.resolve(strict=True)  # propaga FileNotFoundError
+
+    # (b) Re-validate post-strict-resolve. Se un symlink finale punta
+    #     fuori dalla whitelist, qui lo blocchiamo.
+    if not _is_under_any(target_strict, roots_resolved):
+        raise PathSecurityError(
+            f"path '{candidate}' (risolto a '{target_strict}') esce dalla "
+            f"whitelist dopo risoluzione symlink"
+        )
+
+    return target_strict
+
+
+def _is_under_any(target: Path, roots: list[Path]) -> bool:
+    for root in roots:
         try:
-            target_resolved.relative_to(root_resolved)
-            return target_resolved
+            target.relative_to(root)
+            return True
         except ValueError:
             continue
-
-    raise PathSecurityError(
-        f"path '{candidate}' (risolto a '{target_resolved}') non è dentro "
-        f"alcuna whitelist root"
-    )
+    return False

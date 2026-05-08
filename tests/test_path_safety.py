@@ -243,6 +243,40 @@ def test_resolve_within_any_symlink_escaping_whitelist_rejected(
         resolve_within_any(link, [root])
 
 
+def test_resolve_within_any_outside_whitelist_nonexistent_path_rejected(
+    tmp_path: Path,
+) -> None:
+    """Un path fuori whitelist che NON esiste deve sollevare PathSecurityError,
+    non FileNotFoundError. Razionale: se sollevasse FileNotFoundError, il
+    chiamante distinguerebbe "fuori whitelist" da "non esiste" → un attaccante
+    potrebbe enumerare quali path esistono nel filesystem fuori dalla whitelist
+    osservando il tipo di errore (info-leak debole). Mettendo il check
+    whitelist PRIMA dell'esistenza, chiunque chiami con un path fuori
+    whitelist riceve sempre lo stesso errore, indipendentemente dal fatto
+    che il file esista o meno."""
+    root = tmp_path / "whitelist"
+    root.mkdir()
+    outside_nonexistent = tmp_path / "outside" / "nope.log"
+    # NB: outside_nonexistent.parent NON esiste neppure
+    with pytest.raises(PathSecurityError, match="non è dentro"):
+        resolve_within_any(outside_nonexistent, [root])
+
+
+def test_resolve_within_any_inside_whitelist_nonexistent_propagates(
+    tmp_path: Path,
+) -> None:
+    """Specularmente: path dentro whitelist ma inesistente → FileNotFoundError.
+    Il chiamante (es. tail_log) lo mappa su LogPathNotFoundError, distinto
+    da LogPathNotAllowedError. Questo test fissa il contratto rispetto
+    al precedente: la whitelist viene controllata, il file non esiste,
+    è un caso legittimo da segnalare al chiamante."""
+    root = tmp_path / "logs"
+    root.mkdir()
+    inside_nonexistent = root / "today.log"
+    with pytest.raises(FileNotFoundError):
+        resolve_within_any(inside_nonexistent, [root])
+
+
 def test_resolve_within_any_skips_nonexistent_root(tmp_path: Path) -> None:
     """Root inesistente NON solleva: viene saltato silenziosamente
     (mountpoint smontato non rompe il sistema)."""

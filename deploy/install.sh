@@ -130,6 +130,28 @@ getfacl --omit-header "${acl_probe}" 2>/dev/null | grep -q '^user:nobody:r' \
 rm -f "${acl_probe}"
 trap - EXIT
 
+# --- 7b. ACL traversal sui parent path ------------------------------------
+#
+# Le ACL chirurgiche sui project path NON aiutano se i parent non sono
+# eseguibili dal service user. Tipico: /home/hypn0 è 0750 owned by hypn0
+# → devbox-bridge non può attraversare per arrivare ai progetti, e tutti
+# i tool filesystem tornano EACCES.
+#
+# Fix least-privilege: setfacl -m u:devbox-bridge:--x sui parent path
+# fino a PROJECTS_ROOT (incluso). `--x` permette traversal ma NON
+# listing/read della dir → il service user NON può vedere altri file
+# in /home/hypn0/, può solo passare. Più chirurgico di chmod o+x (che
+# darebbe accesso anche al world).
+#
+# Idempotente: setfacl -m è additivo, rieseguibile senza side effect.
+
+projects_parent="$(dirname "${PROJECTS_ROOT}")"
+for parent in "${projects_parent}" "${PROJECTS_ROOT}"; do
+    log "applico ACL traversal-only (--x) per ${SVC_USER} su ${parent}"
+    setfacl -m "u:${SVC_USER}:--x" "${parent}" \
+        || fail "setfacl --x su ${parent} fallito"
+done
+
 # --- 8. Applica ACL per progetto + raccogli path write_enabled ------------
 
 log "applico ACL ai progetti definiti in ${CONFIG_FILE}"

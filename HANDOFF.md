@@ -5,8 +5,80 @@ Stato al **2026-05-08**.
 ## Stato git
 
 - **Branch:** `main`
-- **Ultimo commit:** step 12 (`docs/{TOOLS,SECURITY,SETUP}.md` + `README.md`) — `ee45247`.
+- **Ultimo commit:** step 13 (post-deploy hardening: ACL parent traversal + `tail_log` ordering) — `<INSERIRE-HASH>`.
+- **Pushato su `origin/main`**.
 - **Working tree:** clean.
+
+## Stato deploy (2026-05-08)
+
+Servizio installato e in esecuzione sulla devbox. `install.sh` lanciato
+da Claude Code via `sudo` su autorizzazione utente. Configurazione
+minimale di partenza: solo `devbox-bridge` stesso come progetto opt-in,
+`write_enabled: false`. Smoke test end-to-end verde (vedi sotto).
+
+| Componente | Stato |
+|---|---|
+| Pacchetto host `acl` | installato (mancante prima del deploy) |
+| Utente `devbox-bridge` (no-login, gruppo `systemd-journal`) | creato |
+| `/etc/devbox-bridge/{config.yaml,token.sha256}` | preparati, owner corretti, perms 0640 |
+| ACL chirurgiche `r-X` su `/home/hypn0/projects/devbox-bridge` | applicate |
+| Drop-in systemd `projects.conf` | rigenerato vuoto (zero progetti `write_enabled`) |
+| Codice in `/opt/devbox-bridge` | allineato a `e799910` |
+| venv + `requirements.lock` + entry point `devbox-bridge` | installati |
+| `devbox-bridge.service` | `enabled` + `active (running)` su `127.0.0.1:8765/mcp` |
+
+Smoke test end-to-end (FastMCP client Python locale come
+`devbox-bridge`):
+
+- `list_tools` → 21 tool registrati.
+- `list_projects` → ritorna `devbox-bridge` read-only.
+- `write_file` su progetto `write_enabled=false` → `ToolError:
+  WriteNotAllowedError`.
+- `curl` con token errato → `HTTP 401 unauthorized` (body generico).
+- Audit log `/var/log/devbox-bridge/audit/audit.log` scritto:
+  `auth.failed` + `path.rejected` con `token_id` sha256 troncato a
+  8 char, `args_summary.content` ridotto a `{bytes, content_sha8}`
+  (no plain content).
+
+**Pending lato operatore (rete + claude.ai):**
+
+1. Merge dello snippet `deploy/cloudflared-config.yml` nel `config.yml`
+   di `cloudflared`. Nota: `cloudflared` non è installato sulla devbox
+   stessa — verifica dove gira il tunnel (`gaia`/`urano`?). Se
+   l'origin del tunnel è altrove, il `service:` nello snippet va
+   adattato a `http://<devbox-tailscale-ip>:8765` invece di
+   `127.0.0.1`.
+2. `cloudflared tunnel route dns <TUNNEL> mcpdev.robertonovara.me`
+   (solo prima volta).
+3. (Raccomandato) Cloudflare Access policy davanti al tunnel.
+4. Registrazione connector su claude.ai con URL
+   `https://mcpdev.robertonovara.me/mcp` + header bearer.
+
+**Findings post-deploy (audit dal connector claude.ai 2026-05-08):**
+
+L'utente ha eseguito un audit di sicurezza dal connector subito dopo
+il deploy iniziale. Riassunto:
+
+- *(false positive)* Path traversal in `read_file`/`list_directory`:
+  il client riceveva `EACCES` su `/home/hypn0/projects` invece di
+  `PathSecurityError` esplicito. Verificato: il blocco è a livello
+  codice (`relative_to` + `resolve(strict=False)`), il sintomo
+  EACCES era dovuto al bug perm parent path (vedi step 13). Test
+  diretto come `hypn0` con perms ok → `PathSecurityError` per tutti
+  i traversal tentati.
+- *(bug bloccante)* Service user non poteva attraversare `/home/hypn0`
+  (default `0750 hypn0:hypn0`) → tutti i tool filesystem tornavano
+  EACCES. Fix step 13: `setfacl -m u:devbox-bridge:--x` sui parent
+  path in `install.sh`.
+- *(info-leak debole)* `tail_log` con path FUORI whitelist e
+  inesistente ritornava `LogPathNotFoundError` ("non esiste") invece
+  di `LogPathNotAllowedError` ("non in whitelist"). Discriminava
+  l'esistenza di file fuori whitelist. Fix step 13: invertito ordine
+  di check in `resolve_within_any` (whitelist PRIMA, esistenza DOPO).
+- *(scelta intenzionale)* `list_systemd_services` con `name_filter=""`
+  enumera tutte le ~150 service unit del sistema (no whitelist hard).
+  Asimmetria con `read_journalctl` voluta (metadati pubblici vs log
+  content). Documentata esplicitamente in `SECURITY.md` allo step 13.
 
 ## Step completati
 
@@ -38,9 +110,67 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
   - `README.md` aggiornato: status `step 8 completato` → `MVP completato (step 1-12)`, suite 364 verdi; aggiunta lista 21 tool per area; tabella step implementati 1-12 tutti `✅`; rimossa sezione "Pending" stale.
   - Suite invariata: `364 passed`. Documentazione non tocca codice Python.
 
+- `<INSERIRE-HASH>` — step 13: post-deploy hardening basato sull'audit
+  del connector (vedi *Stato deploy → Findings post-deploy*).
+  - `deploy/install.sh`: nuovo step 7b "ACL traversal sui parent path".
+    Applica `setfacl -m u:devbox-bridge:--x` su `dirname(PROJECTS_ROOT)`
+    e su `PROJECTS_ROOT` stesso. `--x` = execute-only (traversal,
+    non listing/read) → least-privilege rispetto a `chmod o+x` che
+    darebbe accesso al world. Idempotente. Fix-bloccante per il caso
+    `/home/hypn0` default `0750 hypn0:hypn0` su Ubuntu Server.
+  - `src/devbox_bridge/security/paths.py`: `resolve_within_any` riscritto
+    con ordine **whitelist → esistenza** invece di esistenza → whitelist.
+    (a) `cand.resolve(strict=False)` normalizza `..` e segue symlink
+    intermedi esistenti; check whitelist su questo. (b) Solo se
+    whitelist passa, `cand.resolve(strict=True)` per esistenza →
+    propaga `FileNotFoundError`. (c) Defense-in-depth: re-validate
+    post-strict-resolve contro symlink finali che escono. Estratto
+    helper privato `_is_under_any()`. Razionale: prima di questa
+    modifica, un path fuori whitelist + inesistente sollevava
+    `FileNotFoundError` (sintomo: client vedeva "non esiste") invece
+    di `PathSecurityError` (sintomo: "non in whitelist"). Asimmetria
+    di error message → info-leak debole sull'esistenza di file fuori
+    whitelist.
+  - `tests/test_path_safety.py`: 2 nuovi test (`test_resolve_within_any_outside_whitelist_nonexistent_path_rejected`,
+    `test_resolve_within_any_inside_whitelist_nonexistent_propagates`)
+    che fissano il contratto del nuovo ordine.
+  - `docs/SECURITY.md`: aggiunte sotto-sezioni *"Perché l'ordine
+    whitelist → esistenza"*, *"list_systemd_services — asimmetria
+    intenzionale rispetto a read_journalctl"* (metadati pubblici vs
+    log content, single-tenant), *"PathSecurityError vs PermissionError —
+    distinguere il livello d'errore"* (sintomi diversi, proprietà di
+    sicurezza equivalente).
+  - `docs/TOOLS.md`: `tail_log` validation aggiornata con il nuovo
+    ordine; `list_systemd_services` con nota esplicita "niente
+    whitelist hard, asimmetria intenzionale".
+  - `docs/SETUP.md`: aggiunto step 5 al flow `install.sh` per l'ACL
+    traversal sui parent path.
+  - Suite: `366 passed` (+2 dei nuovi). Smoke E2E sul deploy
+    (servizio in produzione su devbox) verificato:
+    - `read_file("devbox-bridge", "README.md")` → 2761 bytes, sha8
+      `e246936b` ✅ (era EACCES prima del fix A).
+    - `read_file(..., "../../etc/passwd")` → `PathSecurityError`
+      esplicito ✅ (prima era EACCES).
+    - `tail_log("/opt/devbox-bridge/logs/nonexistent.log")` →
+      "non è dentro alcuna whitelist root" ✅ (prima era "non esiste").
+    - `tail_log("/var/log/devbox-bridge/nonexistent.log")` →
+      "non esiste" ✅ (caso legittimo dentro whitelist).
+
 ## Step pending (in ordine)
 
-- **step 13** — riepilogo finale all'utente: cosa fatto, cosa fare manualmente lui (running `sudo deploy/install.sh`, clone+venv+pip, `systemctl enable --now`, merge ingress cloudflared, registrazione connector), URL connector `https://mcpdev.robertonovara.me`. Il token plain viene già stampato dall'installer alla prima esecuzione, no nuova generazione qui.
+MVP development chiuso: tutti gli step 1-12 committati e pushati,
+servizio deployato e operativo localmente. Resta solo il wiring rete
++ registrazione connector descritti in *Stato deploy → Pending lato
+operatore*. Niente codice da scrivere.
+
+Per quando si tornerà sul progetto (V1 post-MVP, vedi
+`PM-MCP-PROJECT.md → Definition of Done — V1`):
+
+- Cloudflare Access OAuth davanti al tunnel
+- Audit log shipping (rsync notturno verso storage esterno)
+- Backup automatico di `/etc/devbox-bridge/token.sha256`
+- Healthcheck endpoint pubblico read-only per uptime monitoring
+- Almeno 5 dei 14 progetti reali configurati e testati end-to-end
 
 ## Decisioni di design non ovvie
 

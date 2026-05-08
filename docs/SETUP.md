@@ -109,22 +109,29 @@ L'installer è **idempotente** e rieseguibile. In sintesi:
 4. Verifica supporto ACL via probe attivo (`setfacl`+`getfacl` su
    `mktemp`). NON fa grep su mount options — su ext4 Ubuntu 24.04 `acl`
    è on-by-default e non compare in `mount`.
-5. Parsea `config.yaml` (canonicalizza path con `realpath -e`, rifiuta
+5. Applica ACL **traversal-only** (`--x`) sui parent path
+   `/home/hypn0` e `/home/hypn0/projects` per il service user. Senza
+   questo step il bridge non può attraversare `/home/hypn0/` (default
+   `0750 hypn0:hypn0`) e tutti i tool filesystem tornerebbero EACCES.
+   `--x` permette il traversal ma NON il listing/read della dir →
+   il service user non vede altri file in `~`. Più chirurgico di
+   `chmod o+x` (che darebbe accesso al world).
+6. Parsea `config.yaml` (canonicalizza path con `realpath -e`, rifiuta
    symlink, rifiuta path fuori da `/home/hypn0/projects/`) e applica
    ACL chirurgiche per progetto:
    - `setfacl -R -m u:devbox-bridge:r-X` per progetti read-only;
    - `setfacl -R -m u:devbox-bridge:rwX` + default ACL per progetti
      `write_enabled: true`.
-6. Rigenera **da zero** il drop-in
+7. Rigenera **da zero** il drop-in
    `/etc/systemd/system/devbox-bridge.service.d/projects.conf` con
    `ReadWritePaths=` per ogni progetto `write_enabled: true`. Anche
    vuoto se zero progetti rw, per evitare entry stale su downgrade
    rw→ro.
-7. Genera bearer token random + sha256 in `token.sha256` (0640
+8. Genera bearer token random + sha256 in `token.sha256` (0640
    `root:devbox-bridge`) **solo se manca** e stampa il plain UNA
    VOLTA in stdout. Se il token esiste già, NON lo rigenera (per
    rotazione vedi `Recupero token` più sotto).
-8. Installa la unit base, fa `daemon-reload`. **NO `enable`/`start`
+9. Installa la unit base, fa `daemon-reload`. **NO `enable`/`start`
    automatici** — sono compito dell'operatore alla verifica finale.
 
 Output atteso (esempio):

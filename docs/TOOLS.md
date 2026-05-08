@@ -475,7 +475,10 @@ Schema:
 ### `list_systemd_services(name_filter=None)`
 
 `systemctl list-units --type=service --all --no-pager --plain --no-legend`
-filtrato per substring sul nome unit.
+filtrato per substring sul nome unit. **Niente whitelist hard di unit**
+— asimmetria intenzionale rispetto a `read_journalctl` (vedi
+`SECURITY.md → list_systemd_services — asimmetria intenzionale`):
+restituisce solo metadati pubblici, no log content.
 
 - `name_filter`:
   - `None` → usa `system.systemd_filter_default` di config (default
@@ -484,7 +487,8 @@ filtrato per substring sul nome unit.
     `^[A-Za-z0-9._@:-]{1,64}$` (defense-in-depth contro injection,
     anche se `subprocess.run` è `shell=False`). Test:
     `tests/test_tools_system.py::test_list_systemd_services_filter_pattern_injection_rejected`.
-  - stringa vuota → nessun filtro (tutte le service unit). Test:
+  - stringa vuota → nessun filtro: enumerazione completa di tutte le
+    service unit. Test:
     `::test_list_systemd_services_empty_filter_returns_all`.
 - Return:
 
@@ -511,13 +515,24 @@ filtrato per substring sul nome unit.
 - Validazione (in ordine):
   1. `lines` in range → `LinesOutOfRangeError`. Test:
      `tests/test_tools_system.py::test_tail_log_lines_out_of_range`.
-  2. `resolve_within_any(path, system.log_paths_whitelist)`:
-     - assoluto, esistente, dentro almeno un root della whitelist.
-     - Symlink risolti **prima del confronto** (strict=True) → un symlink
-       dentro la whitelist che esce viene rifiutato. Test:
-       `::test_tail_log_symlink_escaping_whitelist_rejected`.
-     - Path relativi rifiutati. Test:
+  2. `resolve_within_any(path, system.log_paths_whitelist)`. Ordine
+     interno: **whitelist prima, esistenza dopo** (vedi
+     `SECURITY.md → Perché l'ordine whitelist → esistenza`):
+     - Path assoluto richiesto. Test:
        `::test_tail_log_relative_path_rejected`.
+     - `Path.resolve(strict=False)` normalizza `..` e segue symlink
+       intermedi esistenti. Path fuori whitelist (anche inesistenti)
+       → `LogPathNotAllowedError`. Test:
+       `::test_tail_log_path_not_in_whitelist_rejected`,
+       `::test_tail_log_path_traversal_rejected`,
+       `tests/test_path_safety.py::test_resolve_within_any_outside_whitelist_nonexistent_path_rejected`.
+     - Path dentro whitelist ma inesistente →
+       `LogPathNotFoundError` (`FileNotFoundError`). Test:
+       `tests/test_tools_system.py::test_tail_log_nonexistent_raises_log_path_not_found`.
+     - Defense-in-depth post-`strict=True`: re-validate dopo
+       resolve di tutti i symlink. Symlink dentro whitelist che esce
+       (es. `/var/log/.../x → /etc/passwd`) → rifiutato. Test:
+       `::test_tail_log_symlink_escaping_whitelist_rejected`.
      - Whitelist `[]` blocca tutto (fail-secure). Test:
        `::test_tail_log_empty_whitelist_blocks_everything`.
   3. `tail` disponibile nel PATH → `TailNotAvailableError`.
