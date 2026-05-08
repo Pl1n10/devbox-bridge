@@ -5,7 +5,7 @@ Stato al **2026-05-08**.
 ## Stato git
 
 - **Branch:** `main`
-- **Ultimo commit:** step 12 (`docs/{TOOLS,SECURITY,SETUP}.md` + `README.md`) — `<INSERIRE-HASH>`.
+- **Ultimo commit:** step 12 (`docs/{TOOLS,SECURITY,SETUP}.md` + `README.md`) — `ee45247`.
 - **Working tree:** clean.
 
 ## Step completati
@@ -31,7 +31,7 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
 
 ## Step completati (segue)
 
-- `<INSERIRE-HASH>` — step 12: documentazione finale.
+- `ee45247` — step 12: documentazione finale.
   - `docs/TOOLS.md` polish: sostituiti riferimenti `file:line` con simboli (`MCP_HTTP_PATH`, `SKIP_DIRS`, `_REMOTE_NAME_RE`, `_FORBIDDEN_PUSH_FLAGS`, `COMMAND_AUDIT_TRUNCATE_CHARS`); chiarita semantica `git_log` `limit` (`< 1` → `ValueError`; `> MAX_LOG_LIMIT` → clamp silenzioso `min`); rimosso aggettivo "atomico" da `apply_patch` con nota esplicita "non atomico a livello filesystem, verificabile via `content_sha8_after`"; sostituito `devbox-bridge-brief.md:55` con riferimento simbolico alla sezione "Git" del piano tool.
   - `docs/SECURITY.md` aggiornato: banner `step 10` → `MVP (1-12 chiusi)`; aggiunta tabella *"Difese in serie"* a 10 layer (network ingress → audit log) con colonne "blocca / non blocca" — il layer 3 RateLimiter dichiara esplicitamente "brute-force di token invalidi non blocca, per design"; aggiunta sotto-sezione *"Versioning dello schema"* nell'audit (no `schema_version` oggi, breaking changes vietati senza migration plan); sezione `Mitigazioni a livello deploy` riscritta con dettagli step 11 (gruppo `systemd-journal`, drop-in `ReadWritePaths`, ACL probe attivo, hardening unit completo); permessi journal default → `systemd-journal` (NON `adm`); sezione *"two-key EvoTrader/Robo-PAC"* trasformata in riferimento prospettico a `PM-MCP-PROJECT.md → Cosa il bridge NON farà mai`; eventi auditati: dichiarato esplicitamente l'override `outcome ∈ {denied, error}` su tool read.
   - `docs/SETUP.md` riscritto da capo: pre-requisiti, layout file/permessi, clone + venv, config, dettaglio `install.sh` (8 fasi + output atteso), smoke test locale, avvio systemctl, ingress cloudflared, Cloudflare Access raccomandato, registrazione connector, verifica end-to-end, recupero token (rotazione via `rm token.sha256` + rilancio installer), upgrade, disinstallazione completa.
