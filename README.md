@@ -1,12 +1,27 @@
 # devbox-bridge
 
-MCP server custom che gira sulla devbox e si espone via Cloudflare Tunnel come custom connector su claude.ai.
+MCP server custom che gira sulla devbox e si espone via Cloudflare
+Tunnel come custom connector su claude.ai.
 
-Espone tool sicuri su filesystem, git, esecuzione test/lint/build e introspezione di sistema, con auth bearer + rate limit + audit log.
+Espone **21 tool sicuri** su filesystem, git, esecuzione test/lint/build
+e introspezione di sistema (info host, log, journalctl), con auth
+bearer + rate limit + audit log.
 
-> Status: step 8 completato. Il server FastMCP parte su HTTP `/mcp` e registra
-> i tool filesystem e git. Execution, system, deploy finale e documentazione
-> completa restano negli step successivi.
+> Status: **MVP completato (step 1-12)**. Server FastMCP HTTP `/mcp`
+> con 21 tool registrati, auth+rate limit, audit log strutturato,
+> deploy hardened (systemd + ACL chirurgiche). Suite: 364 test verdi.
+
+## Tool esposti
+
+- **Filesystem (6):** `list_projects`, `read_file`, `write_file`,
+  `apply_patch`, `list_directory`, `search_files`.
+- **Git (7):** `git_status`, `git_diff`, `git_log`, `git_branch_current`,
+  `git_create_branch`, `git_commit`, `git_push`.
+- **Esecuzione (4):** `run_command`, `run_tests`, `run_lint`, `run_build`.
+- **Sistema (4, read-only):** `get_system_info`, `list_systemd_services`,
+  `tail_log`, `read_journalctl`.
+
+Reference completo: [`docs/TOOLS.md`](docs/TOOLS.md).
 
 ## Quick start (dev locale)
 
@@ -34,16 +49,32 @@ Config runtime:
 ```
 src/devbox_bridge/    # codice sorgente
 tests/                # pytest, target coverage 90% su security/auth
-deploy/               # systemd unit, docker-compose, cloudflared config, installer
-docs/                 # SETUP / SECURITY / TOOLS
+deploy/               # systemd unit, drop-in, installer, docker-compose, cloudflared snippet
+docs/                 # SETUP / SECURITY / TOOLS / brief originale
 ```
 
 ## Stato implementazione
 
-- Completati: config, auth/rate limit, path/env/command security, audit log,
-  tool filesystem, server FastMCP HTTP, tool git (read+write con backstop).
-- Pending: tool execution, tool system, deploy definitivo, docs finali.
+| Step | Componente | Stato |
+|------|-----------|-------|
+| 1 | Skeleton repo | ✅ |
+| 2 | `config.py` | ✅ |
+| 3 | `auth.py` (bearer + rate limit) | ✅ |
+| 4 | `security/{paths,commands,env}.py` | ✅ |
+| 5 | `audit.py` (JSON Lines + rotation) | ✅ |
+| 6 | `tools/filesystem.py` | ✅ |
+| 7 | `server.py` (FastMCP HTTP + middleware) | ✅ |
+| 8 | `tools/git.py` (read+write + backstop) | ✅ |
+| 9 | `tools/execution.py` | ✅ |
+| 10 | `tools/system.py` | ✅ |
+| 11 | `deploy/*` (systemd + ACL + cloudflared) | ✅ |
+| 12 | Documentazione finale | ✅ |
 
 ## Deploy
 
-Vedi `docs/SETUP.md`.
+Vedi [`docs/SETUP.md`](docs/SETUP.md) per l'installazione end-to-end
+(installer idempotente, hardening systemd, ingress cloudflared,
+registrazione connector claude.ai).
+
+Per il threat model e la mappa delle difese in serie vedi
+[`docs/SECURITY.md`](docs/SECURITY.md).

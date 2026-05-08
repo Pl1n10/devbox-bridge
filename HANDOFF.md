@@ -1,11 +1,11 @@
 # HANDOFF.md — devbox-bridge
 
-Stato al **2026-05-04**.
+Stato al **2026-05-08**.
 
 ## Stato git
 
 - **Branch:** `main`
-- **Ultimo commit:** step 11 (`deploy/*` finalizzati: install.sh con ACL chirurgiche + drop-in systemd `ReadWritePaths` derivato da `config.yaml`, unit hardened, Dockerfile/compose, snippet cloudflared) — `3f72eff`.
+- **Ultimo commit:** step 12 (`docs/{TOOLS,SECURITY,SETUP}.md` + `README.md`) — `<INSERIRE-HASH>`.
 - **Working tree:** clean.
 
 ## Step completati
@@ -29,13 +29,17 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
 
 - `30a4889` — step 10: `tools/system.py` con 4 tool read-only (`get_system_info`, `list_systemd_services`, `tail_log`, `read_journalctl`). Aggiunto `SystemConfig` opzionale a `AppConfig` con default permissivi (`/var/log/devbox-bridge`, `devbox-bridge.service`, filter `devbox-`); single source of truth in `config.py` (`DEFAULT_LOG_PATHS_WHITELIST`/`DEFAULT_SYSTEMD_UNIT_WHITELIST`/`DEFAULT_SYSTEMD_FILTER`). Semantica fail-secure: sezione `system:` omessa → default permissivo; whitelist esplicitamente `[]` → zero risorse accessibili. Costanti commentate: `SYSTEM_TIMEOUT_SECONDS=30`, `DEFAULT_LOG_LINES=100`, `MAX_LOG_LINES=5000`, `MAX_LOG_OUTPUT_BYTES=512KB` (metà context window 200K-token). Path validation via nuova `security.paths.resolve_within_any(candidate, allowed_roots)`: candidato `Path.resolve(strict=True)` PRIMA del confronto → symlink in whitelist che escono fuori sono rifiutati; ordine root non significativo; root inesistenti saltati. Unit validation via doppio gate (regex stretta `^[A-Za-z0-9._@:-]{1,64}$` + appartenenza a whitelist). Filter `list_systemd_services` validato con stessa regex (defense-in-depth contro injection nonostante `shell=False`). `get_system_info` resiliente a fallimenti parziali (df/uname assenti → campo a default, no eccezione). Schema: `uptime_seconds: int`, `memory_bytes` in byte (kB×1024), `disk[]` human-readable da `df -h` (NON parsare numericamente). `audit.py` esteso: outcome `denied`/`error` SEMPRE auditato (ignora `should_audit`/`audit_reads`) — denial è materiale forense. Server: `LogPathNotAllowedError` mappata a `event="path.rejected"`/`outcome="denied"` (simmetrica a `WriteNotAllowedError`); `JournalctlUnitNotAllowedError` come `tool.read_journalctl`/`denied`. 4 tool registrati in `create_mcp`. Permessi journal: utente in gruppo `adm` (Ubuntu default) o `systemd-journal` sufficiente. Modello PII single-tenant documentato. Test: 7 nuovi `resolve_within_any` in `tests/test_path_safety.py`, 42 nuovi in `tests/test_tools_system.py` (coverage `tools/system.py` 93%, target ≥90%; 10 righe scoperte = branch difensivi `/proc` read failures), 3 nuovi in `tests/test_server.py` (registrazione 4 tool + audit denied + audit success non auditato). Verifica: `364 passed`; `mypy src` pulito; `ruff check` clean.
 
-## Step in corso
+## Step completati (segue)
 
-(nessuno — step 11 chiuso, prossimo step 12)
+- `<INSERIRE-HASH>` — step 12: documentazione finale.
+  - `docs/TOOLS.md` polish: sostituiti riferimenti `file:line` con simboli (`MCP_HTTP_PATH`, `SKIP_DIRS`, `_REMOTE_NAME_RE`, `_FORBIDDEN_PUSH_FLAGS`, `COMMAND_AUDIT_TRUNCATE_CHARS`); chiarita semantica `git_log` `limit` (`< 1` → `ValueError`; `> MAX_LOG_LIMIT` → clamp silenzioso `min`); rimosso aggettivo "atomico" da `apply_patch` con nota esplicita "non atomico a livello filesystem, verificabile via `content_sha8_after`"; sostituito `devbox-bridge-brief.md:55` con riferimento simbolico alla sezione "Git" del piano tool.
+  - `docs/SECURITY.md` aggiornato: banner `step 10` → `MVP (1-12 chiusi)`; aggiunta tabella *"Difese in serie"* a 10 layer (network ingress → audit log) con colonne "blocca / non blocca" — il layer 3 RateLimiter dichiara esplicitamente "brute-force di token invalidi non blocca, per design"; aggiunta sotto-sezione *"Versioning dello schema"* nell'audit (no `schema_version` oggi, breaking changes vietati senza migration plan); sezione `Mitigazioni a livello deploy` riscritta con dettagli step 11 (gruppo `systemd-journal`, drop-in `ReadWritePaths`, ACL probe attivo, hardening unit completo); permessi journal default → `systemd-journal` (NON `adm`); sezione *"two-key EvoTrader/Robo-PAC"* trasformata in riferimento prospettico a `PM-MCP-PROJECT.md → Cosa il bridge NON farà mai`; eventi auditati: dichiarato esplicitamente l'override `outcome ∈ {denied, error}` su tool read.
+  - `docs/SETUP.md` riscritto da capo: pre-requisiti, layout file/permessi, clone + venv, config, dettaglio `install.sh` (8 fasi + output atteso), smoke test locale, avvio systemctl, ingress cloudflared, Cloudflare Access raccomandato, registrazione connector, verifica end-to-end, recupero token (rotazione via `rm token.sha256` + rilancio installer), upgrade, disinstallazione completa.
+  - `README.md` aggiornato: status `step 8 completato` → `MVP completato (step 1-12)`, suite 364 verdi; aggiunta lista 21 tool per area; tabella step implementati 1-12 tutti `✅`; rimossa sezione "Pending" stale.
+  - Suite invariata: `364 passed`. Documentazione non tocca codice Python.
 
 ## Step pending (in ordine)
 
-- **step 12** — documentazione: aggiornare `README.md`, `docs/SETUP.md`, `docs/SECURITY.md`, `docs/TOOLS.md`. `SETUP.md` deve riflettere il flow reale di `install.sh` (root, ACL, drop-in, next steps), `SECURITY.md` deve menzionare le tre alternative valutate per access control progetti (rimando a `FAILURES.md`).
 - **step 13** — riepilogo finale all'utente: cosa fatto, cosa fare manualmente lui (running `sudo deploy/install.sh`, clone+venv+pip, `systemctl enable --now`, merge ingress cloudflared, registrazione connector), URL connector `https://mcpdev.robertonovara.me`. Il token plain viene già stampato dall'installer alla prima esecuzione, no nuova generazione qui.
 
 ## Decisioni di design non ovvie

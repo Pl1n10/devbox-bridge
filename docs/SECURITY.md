@@ -1,9 +1,40 @@
 # SECURITY — Threat model
 
-> Stato step 10: threat model e audit di tutti i componenti implementati
-> sono documentati. Inclusi: backstop dei tool git (step 8), gating exec su
-> `write_enabled` + deny list su comandi configurati (step 9), whitelist
-> path/unit per i tool sistema con semantica fail-secure (step 10).
+> Stato MVP (step 1-12 chiusi). Threat model e audit di tutti i componenti
+> implementati sono documentati: auth bearer + rate limit (step 3),
+> validazione path/comandi/env (step 4), audit log JSON Lines con
+> rotazione/retention (step 5), backstop dei tool git (step 8), gating
+> exec su `write_enabled` + deny list su comandi configurati (step 9),
+> whitelist path/unit per i tool sistema con semantica fail-secure (step
+> 10), hardening systemd + ACL chirurgiche da `config.yaml` (step 11).
+
+## Difese in serie
+
+Il bridge applica difese **in cascata, non ridondanti**: ogni livello
+copre una superficie diversa, e tutti devono cedere perché un'azione non
+autorizzata vada a buon fine. La tabella elenca cosa blocca ciascun
+livello e cosa **non** è suo compito (le entry "non blocca" non sono
+buchi: sono delegazioni esplicite a un altro layer).
+
+| # | Layer | Implementazione | Blocca | Non blocca (per design) |
+|---|---|---|---|---|
+| 1 | Network ingress | Cloudflare Tunnel + (opz.) Cloudflare Access | Esposizione pubblica diretta della porta 8765; (con Access) accesso anonimo | Brute-force token a livello applicativo (vedi 2-3) |
+| 2 | Auth bearer | `auth.Authenticator` (`hashlib.sha256` + `hmac.compare_digest`) | Token mancante / invalido / scaduto | DoS-via-token-spam (vedi 3) |
+| 3 | RateLimiter | `auth.RateLimiter` sliding-window 60/min per token+IP | Burst di chiamate da un client autenticato | Brute-force di token invalidi (token errati NON consumano il bucket per design — vedi `Rate limit → Token invalidi NON consumano il rate limit` per il razionale) |
+| 4 | Project gate | `config.projects[*].write_enabled` / `allow_push` | Scritture su progetti non opt-in; push su progetti senza `allow_push` | Scritture *dentro* un progetto opt-in (granularità per-file non esiste) |
+| 5 | Path validation | `security/paths.py` (`resolve_within`, `resolve_within_any`) | Traversal `..`, simlink che escono, path assoluti fuori, glob malformati | TOCTOU (single-tenant, accettato — vedi `HANDOFF.md`) |
+| 6 | Command validation | `security/commands.py` (deny list + tokenize-and-check + regex whitelist) | Pattern distruttivi noti, comandi non in whitelist | Comandi semantically-malicious che matchano una whitelist troppo permissiva |
+| 7 | Env sanitizer | `security/env.sanitize_env()` whitelist-mode | Leak di `*_TOKEN`, `*_SECRET`, `*_KEY`, `AWS_*`, `LD_PRELOAD`, `PYTHONPATH` non opt-in | Variabili in `env_passthrough` esplicito (deroga dichiarata, audit-warned) |
+| 8 | Subprocess hardening | `subprocess.run(shell=False, stdin=DEVNULL)` + `cwd=project_root` | Shell injection via metachar; ereditarietà stdin; escape dal cwd | Bug nel comando configurato dall'operatore |
+| 9 | systemd hardening | `deploy/devbox-bridge.service` + drop-in `ReadWritePaths` | Scrittura kernel-level su path non opt-in (anche se il check applicativo cedesse), exec di nuovi binari, accesso a `/home/hypn0` user files | Bug semantici dentro i path scrivibili dichiarati |
+| 10 | Audit log | `audit.AuditLogger` JSON Lines + rotazione + sanitizzazione | Rumore non-strutturato, leak di token plain o path sensibili | Detection real-time (è log post-hoc, non IDS) |
+
+I livelli (4)+(9) sono **complementari**, non ridondanti: il check
+applicativo `write_enabled` è una difesa logica; il `ReadWritePaths` di
+systemd è un bind mount kernel-level. Anche se un baco bypassasse il
+primo, il filesystem nel namespace del servizio resterebbe read-only
+sui progetti non opt-in. `setfacl` da solo non basterebbe perché
+systemd lo bypassa via namespace; le due difese sono complementari.
 
 ## Cosa devbox-bridge protegge
 
@@ -26,10 +57,31 @@
 
 ## Mitigazioni a livello deploy
 
-- User dedicato `devbox-bridge` (no sudo)
-- systemd hardening: `ProtectSystem=strict`, `NoNewPrivileges`, capabilities drop
-- Cloudflare Access davanti al tunnel come 2° fattore (consigliato)
-- Audit log su file separato per ogni azione write/exec
+- **User dedicato `devbox-bridge`** (no-login, no sudo). Membership
+  `systemd-journal` per `read_journalctl`; **NON** `adm` (least
+  privilege: `adm` darebbe accesso anche a `/var/log/syslog`,
+  `/var/log/auth.log`, ecc. che il bridge per design non tocca). Vedi
+  `HANDOFF.md → Permessi journal`.
+- **systemd hardening** (`deploy/devbox-bridge.service`):
+  `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `MemoryDenyWriteExecute`, `RestrictAddressFamilies=AF_UNIX AF_INET
+  AF_INET6`, `SystemCallFilter=@system-service ~@privileged @resources`,
+  `PrivateTmp/Devices`, `LockPersonality`, `ProtectProc=invisible`,
+  `LimitNOFILE=4096`, `TasksMax=256`. Capabilities all-drop.
+- **Drop-in `ReadWritePaths`** (`/etc/systemd/system/devbox-bridge.service.d/projects.conf`):
+  `ReadWritePaths=` derivato da `config.yaml` — solo i progetti opt-in
+  (`write_enabled: true`) sono scrivibili nel namespace del servizio.
+  Drop-in **rigenerato da zero a ogni `install.sh`**, anche vuoto se
+  zero progetti rw, per evitare entry stale su downgrade rw→ro.
+- **ACL chirurgiche** sui progetti (`setfacl -R -m u:devbox-bridge:r-X`
+  o `rwX` + default ACL). Probe attivo (`setfacl`+`getfacl` su
+  `mktemp`) — NON grep su mount options, falserebbe negativo su ext4
+  Ubuntu 24.04 dove `acl` è on-by-default e non compare in `mount`.
+- **Cloudflare Access** davanti al tunnel come 2° fattore (consigliato,
+  vedi `SETUP.md`).
+- **Audit log** su file separato per ogni azione write/exec, fuori dal
+  bind mount dei progetti (`/var/log/devbox-bridge`, owned by service
+  user, `0750`).
 
 ## Rate limit — proprietà e limiti
 
@@ -133,19 +185,53 @@ Ogni linea ha lo stesso set di campi (alcuni `null` se non applicabili):
 `outcome ∈ {success, denied, error}`. Schema fisso = grep-able, parsabile,
 alerting facile.
 
+`outcome_detail` (top-level opzionale, popolato solo per i tool exec) è
+documentato in `TOOLS.md → outcome_detail audit`. Valori:
+`completed`/`nonzero_exit`/`timed_out`. Non promosso a `outcome="error"`
+perché il bridge ha eseguito il subprocess correttamente; il dettaglio
+descrive cosa è successo nel processo figlio.
+
+#### Versioning dello schema
+
+Lo schema **non ha un campo `schema_version`**. Scelta consapevole, non
+dimenticanza: l'MVP single-tenant non ha consumer downstream
+(parser, alerting, dashboard) da migrare in modo coordinato, e
+introdurre un campo versionato senza un piano di evoluzione sarebbe
+cargo cult.
+
+**Conseguenza operativa: breaking changes dello schema audit sono
+vietati senza un migration plan esplicito.** Aggiungere campi *opzionali*
+(es. `outcome_detail` allo step 9) è non-breaking. Rinominare campi,
+cambiare tipi o restringere domini di valori (es. allargare `outcome`)
+richiede:
+
+1. transition window con scrittura dual-format,
+2. comunicazione ai consumer (oggi: solo `tail_log`/`read_journalctl`
+   stessi tool del bridge — domani potrebbe essere uno script di
+   alerting esterno),
+3. introduzione di `schema_version` come parte stessa della migration.
+
+Se la complessità cresce (multi-tenant, audit shipping out-of-box verso
+un SIEM), `schema_version` va aggiunto **prima** del primo breaking
+change, non dopo.
+
 ### Eventi auditati
 
-Sempre loggati:
+Sempre loggati (override di `audit_reads`):
   - `auth.failed`, `auth.rate_limited`
   - `command.rejected`, `path.rejected`
   - Tutti i tool write/exec: `tool.write_file`, `tool.apply_patch`,
     `tool.git_commit`, `tool.git_push`, `tool.git_create_branch`,
     `tool.run_command`, `tool.run_tests`, `tool.run_lint`, `tool.run_build`
+  - **Qualsiasi `outcome ∈ {denied, error}`** anche su tool read. Un
+    denial o un errore è materiale forense, non rumore — `audit_reads=false`
+    sopprime il volume delle read OK, non i fail. Implementato in
+    `AuditLogger.log` (override esplicito su outcome non-success).
 
-Loggati solo se `audit.audit_reads: true` in config:
+Loggati solo se `audit.audit_reads: true` in config (e `outcome="success"`):
   - `tool.read_file`, `tool.list_projects`, `tool.list_directory`,
     `tool.search_files`, `tool.git_status`, `tool.git_diff`, `tool.git_log`,
-    `tool.git_branch_current`, `tool.tail_log`,
+    `tool.git_branch_current`, `tool.tail_log`, `tool.read_journalctl`,
     `tool.list_systemd_services`, `tool.get_system_info`
 
 Default `audit_reads: false` per evitare rumore — i read sono frequenti.
@@ -318,18 +404,31 @@ allowed_roots)`:
 
 ### Permessi di lettura del journal
 
-L'utente che esegue il bridge deve avere accesso al journal system-wide
-per `read_journalctl` su unit di sistema. Su Ubuntu, l'appartenenza ai
-gruppi **`adm`** o **`systemd-journal`** è sufficiente. Verifica:
+L'utente che esegue il bridge deve avere accesso al journal per le unit
+in `system.systemd_unit_whitelist`. **Default: gruppo `systemd-journal`**
+(NON `adm`). Razionale: con la whitelist di default
+(`["devbox-bridge.service"]`) l'unica unit accessibile è il servizio
+stesso, quindi `systemd-journal` è sufficiente e segue least privilege.
+`adm` aggiungerebbe accesso anche a `/var/log/syslog`,
+`/var/log/auth.log`, ecc. che il bridge per design non tocca.
+
+`deploy/install.sh` esegue `usermod -aG systemd-journal devbox-bridge`
+e fail-fast se la membership non è applicata.
+
+Se in futuro un operatore amplia `system.log_paths_whitelist` (es.
+aggiunge `/var/log/syslog`), dovrà aggiungere `adm` manualmente —
+decisione consapevole, non automatica.
+
+Smoke test della membership effettiva:
 
 ```bash
-journalctl -u systemd-journald.service -n 5
+sudo -u devbox-bridge journalctl -u devbox-bridge.service -n 5
 ```
 
-Se ritorna entries → OK. Se ritorna "No journal files were found" o "Hint:
-You are currently not seeing messages from other users" → aggiungere
-l'utente a `adm` (`sudo usermod -aG adm <user>` + nuovo login). Lo step 11
-(`install.sh`) include questo check come fail-fast pre-deploy.
+Se ritorna entries → OK. Se ritorna "No journal files were found" o
+"Hint: You are currently not seeing messages from other users" → la
+membership non è applicata; verificare `id devbox-bridge` e ri-eseguire
+`install.sh`.
 
 ### Modello PII / single-tenant
 
@@ -342,18 +441,19 @@ documentato come commento in `tools/system.py`.
 
 ## Progetti two-key — EvoTrader e Robo-PAC ETF
 
-Questi due progetti hanno guardrail finanziari nel global context e richiedono una
-regola di sicurezza aggiuntiva, **anche oltre quanto enforced dal codice**:
+Regola **prospettica**: oggi nessuno dei due progetti è abilitato in
+`config.yaml.example` (entrambi commentati con warning). La policy
+operativa "two-key" — `write_enabled` + `command_whitelist`
+safe-by-construction — vive in `PM-MCP-PROJECT.md` sezione *"Cosa il
+bridge NON farà mai"* e nei warning del file di config esempio.
 
-> Anche se in futuro abilitassi `write_enabled: true` su `evotrader` o `robo-pac-etf`,
-> NON si abilita mai un `command_whitelist` con pattern che possano emettere ordini
-> reali. In particolare:
-> - **Vietato:** `^python -m robopac\.execute.*$`, `^python -m evotrader\.live.*$`,
->   qualsiasi entry-point CLI che parli con Interactive Brokers o Trade Republic in
->   modalità live.
-> - **Permesso:** `^pytest( .*)?$`, `^ruff( .*)?$`, eventuali backtest in dry-run.
+In sintesi: anche se in futuro `write_enabled: true` venisse abilitato
+su `evotrader` o `robo-pac-etf`, la `command_whitelist` non deve mai
+contenere pattern che possano emettere ordini reali (entry-point live
+verso Interactive Brokers o Trade Republic). Sono permessi solo
+test/lint/backtest dry-run.
 
-Razionale: un comando malizioso scivolato in conversazione (anche solo come tool-use
-suggerito da una pagina web letta in claude.ai) non deve mai poter muovere capitali.
-Il principio è "due chiavi" — `write_enabled` da solo non basta, serve anche una
-whitelist comandi dimostrabilmente safe-by-construction.
+Razionale: un comando malizioso scivolato in conversazione (anche come
+tool-use suggerito da una pagina web letta in claude.ai) non deve mai
+poter muovere capitali. Per il dettaglio della policy e del razionale
+"due chiavi" vedi `PM-MCP-PROJECT.md`.
