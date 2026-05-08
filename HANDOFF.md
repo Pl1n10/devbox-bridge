@@ -5,7 +5,7 @@ Stato al **2026-05-08**.
 ## Stato git
 
 - **Branch:** `main`
-- **Ultimo commit:** step 13 (post-deploy hardening: ACL parent traversal + `tail_log` ordering) — `<INSERIRE-HASH>`.
+- **Ultimo commit:** step 13 (post-deploy hardening: ACL parent traversal + `tail_log` ordering) — `ec7b1e7`.
 - **Pushato su `origin/main`**.
 - **Working tree:** clean.
 
@@ -110,7 +110,7 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
   - `README.md` aggiornato: status `step 8 completato` → `MVP completato (step 1-12)`, suite 364 verdi; aggiunta lista 21 tool per area; tabella step implementati 1-12 tutti `✅`; rimossa sezione "Pending" stale.
   - Suite invariata: `364 passed`. Documentazione non tocca codice Python.
 
-- `<INSERIRE-HASH>` — step 13: post-deploy hardening basato sull'audit
+- `ec7b1e7` — step 13: post-deploy hardening basato sull'audit
   del connector (vedi *Stato deploy → Findings post-deploy*).
   - `deploy/install.sh`: nuovo step 7b "ACL traversal sui parent path".
     Applica `setfacl -m u:devbox-bridge:--x` su `dirname(PROJECTS_ROOT)`
