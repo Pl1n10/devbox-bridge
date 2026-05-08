@@ -178,6 +178,15 @@ while IFS=$'\t' read -r proj_name proj_path proj_write; do
         log "  ${proj_name} (ro): setfacl -R r-X su ${canon}"
         setfacl -R    -m "u:${SVC_USER}:r-X" "${canon}"
     fi
+
+    # git safe.directory: i tool git falliscono con "dubious ownership"
+    # se il repo è owned da un utente diverso dal servizio. Single-tenant:
+    # il repo è di hypn0 ma il servizio gira come devbox-bridge. Aggiungiamo
+    # safe.directory per ogni progetto opt-in al gitconfig globale del
+    # service user. add idempotente (git ignora duplicati su set-all).
+    sudo -u "${SVC_USER}" git config --global --get-all safe.directory \
+        2>/dev/null | grep -qxF "${canon}" || \
+        sudo -u "${SVC_USER}" git config --global --add safe.directory "${canon}"
 done < <(
     python3 - "${CONFIG_FILE}" <<'PYEOF'
 import sys, yaml

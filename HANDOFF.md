@@ -156,6 +156,20 @@ Implementazione segue l'ordine fissato in `docs/devbox-bridge-brief.md:243`:
     - `tail_log("/var/log/devbox-bridge/nonexistent.log")` →
       "non esiste" ✅ (caso legittimo dentro whitelist).
 
+- *follow-up step 13* — `install.sh` aggiornato per gestire git
+  `safe.directory`. I tool git fallivano con `fatal: detected dubious
+  ownership in repository at '/home/hypn0/projects/...'` perché git
+  2.36+ rifiuta repo owned da utente diverso da quello corrente.
+  Single-tenant: il repo è di `hypn0`, il servizio gira come
+  `devbox-bridge`. Fix: `install.sh` ora aggiunge ogni `canon` di
+  progetto a `safe.directory` nel gitconfig globale del service user
+  (`/opt/devbox-bridge/.gitconfig`), idempotente (skip se già
+  presente). Il file viene letto ma mai scritto a runtime
+  (compatibile con `ProtectSystem=strict`). Smoke test post-fix:
+  `git_status` su `devbox-bridge` ritorna `branch=main, clean=False`
+  come atteso (working tree dirty per `install.sh` modificato in
+  questo follow-up).
+
 ## Step pending (in ordine)
 
 MVP development chiuso: tutti gli step 1-12 committati e pushati,
