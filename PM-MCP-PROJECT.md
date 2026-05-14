@@ -177,6 +177,75 @@ V1 è "il bridge è davvero pronto da affidare a sé stessi senza pensarci". Agg
 
 ---
 
+## Roadmap — Bootstrap progetti da MCP (post-V1)
+
+> Aggiunto 2026-05-13 durante prima sessione di dogfooding reale (write_enabled=true sul progetto `devbox-bridge` stesso). Obiettivo: permettere al bridge di **registrare nuovi progetti sotto richiesta esplicita**, oggi non possibile by design.
+
+### Motivazione
+
+Oggi il MCP non può creare un nuovo progetto sulla devbox: `/etc/devbox-bridge/config.yaml` è root-only, `setfacl` e il drop-in systemd `projects.conf` li applica `deploy/install.sh` come root, il restart richiede `systemctl`. Risultato: se voglio chiedere a claude.ai "crea `project-delphi` sulla devbox", devo dropparmi a root e fare i passi manualmente.
+
+Vogliamo che — **sempre e solo sotto richiesta esplicita dell'utente, mai autonomamente in catena LLM** — il bridge possa: (1) materializzare un albero file dentro `/home/hypn0/projects/<nuovo>/`, (2) registrare il progetto in `config.yaml`, (3) applicare ACL + drop-in + restart. Mantenendo il threat model attuale: no path traversal, no escape da `/home/hypn0/projects/`, contratto closed-set, audit completo, validazione lato componente privilegiato (mai delegata al chiamante).
+
+### Fase 0 — Scaffolding "out-of-band" (zero nuovo privilegio)
+
+L'MCP non registra il progetto direttamente, ma prepara tutto e consegna un **comando one-shot root-only** da incollare in `sudo`. Sblocca il caso d'uso senza introdurre superficie nuova.
+
+- [ ] **T0.1** Tool `prepare_project_bundle(name, archive_b64|url, write_enabled, test/lint/build, whitelist)`:
+  - valida `name` (regex `^[a-z0-9][a-z0-9-]{1,39}$`)
+  - rifiuta path traversal nello zip (`../`, leading `/`) e symlink interni
+  - estrae in staging del bridge: `/var/lib/devbox-bridge/staging/<name>/`
+  - emette **manifest firmato** (HMAC col token bridge): `{name, path_target, sha256_tree, config_block_yaml, ts}`
+- [ ] **T0.2** Script `deploy/register-project.sh` (root) idempotente:
+  - prende il manifest, verifica HMAC, controlla `ts` non oltre N minuti
+  - sposta lo staging in `/home/hypn0/projects/<name>/` (rifiuta se la dest esiste già con owner diverso da `hypn0`)
+  - merge nel `config.yaml` atomico (tmp + `python3 -c "import yaml; yaml.safe_load(...)"` di sanity + `rename`)
+  - richiama `deploy/install.sh` per ACL + drop-in + `daemon-reload`
+- [ ] **T0.3** Tool `register_project_command(manifest_id)` → ritorna la stringa esatta `sudo /opt/devbox-bridge/deploy/register-project.sh <id>` da incollare.
+- [ ] **T0.4** Audit: estendere l'audit log esistente con eventi `prepare_project_bundle` e `register_project_command_emitted`, con `manifest_id` come correlation key.
+- [ ] **T0.5** GC dello staging: cancellare bundle non promossi dopo 24h.
+
+Risultato finale del flow: "crea project-delphi" → io rispondo "incolla: `sudo ...`" → tu incolli → fatto.
+
+**Stato al 2026-05-13 (prima sessione di dogfooding):**
+- ✅ `deploy/register-project.sh` draft committato — root-side completo: HMAC verify (constant-time, Python), schema check, replay window, sha256_tree, jail in `PROJECTS_ROOT`, merge atomico del config, invoke di `install.sh`, restart, cleanup, audit log JSON in `/var/log/devbox-bridge/admin-audit.log`. Header del file documenta il **contratto del bundle** (struttura `staging/<id>/{manifest.json, manifest.hmac, payload/}` + schema manifest v1) — chi implementerà il tool `prepare_project_bundle` lato bridge usa quello come spec.
+- ✅ `deploy/install.sh` patchato — crea `/var/lib/devbox-bridge/staging/` (owner bridge:bridge 0750) + genera `bootstrap.key` (root:bridge 0640) idempotente.
+- ⏳ T0.1 (tool `prepare_project_bundle` lato bridge): da scrivere, in `src/devbox_bridge/tools/`. Deve produrre bundle conforme allo schema in `register-project.sh`.
+- ⏳ T0.3 (tool `register_project_command`): banale una volta che T0.1 esiste.
+- ⏳ T0.4 (audit eventi `prepare_project_bundle` / `register_project_command_emitted`): da aggiungere a `audit.py` come nuovi eventi nel set `AUDITED_WRITE_EVENTS`.
+- ⏳ T0.5 (GC staging): da scrivere come task ricorrente nel bridge o cron systemd timer.
+- ⚠️ `register-project.sh` non ancora testato end-to-end (manca T0.1 che produca un manifest da consumare). Test manuale possibile fabbricando un bundle a mano.
+
+### Fase 1 — Admin sidecar privilegiato
+
+Quando Fase 0 inizia a pesare e si vuole chiudere il loop senza `sudo` manuale, serve un secondo processo root con contratto strettissimo.
+
+- [ ] **T1.1** Nuova unit `devbox-bridge-admin.service` (root) che ascolta su `/run/devbox-bridge/admin.sock` (root:bridge 0660). Peer-cred via `SO_PEERCRED`: accetta solo `uid=bridge`.
+- [ ] **T1.2** Protocollo JSON line-based **closed-set**: `register_project`, `unregister_project`, `set_write_enabled`. Nessun "exec arbitrary", nessun "edit config raw". Schema validato lato admin.
+- [ ] **T1.3** Validazioni nel sidecar (NON delegate al bridge, che è meno fidato):
+  - name regex, `realpath` del path target sotto `/home/hypn0/projects/`, no symlink in mezzo, no owner diverso da `hypn0`
+  - `command_whitelist` proposta dal bridge filtrata contro una **superwhitelist hardcoded** nel sidecar — il bridge non può iniettare `^rm.*` o `^curl.*`
+- [ ] **T1.4** Refactor: estrarre da `deploy/install.sh` le funzioni di setup-progetto in `deploy/lib/*.sh` riusabili sia dall'installer sia dal sidecar (evita drift).
+- [ ] **T1.5** Audit log dedicato `/var/log/devbox-bridge/admin-audit.log`, append-only, una riga JSON per op, include `pid+uid` del peer e diff testuale del config applicato.
+- [ ] **T1.6** Hardening unit: `ReadWritePaths=/etc/devbox-bridge /var/log/devbox-bridge /etc/systemd/system/devbox-bridge.service.d /home/hypn0/projects`. **No** `NoNewPrivileges` (deve `setfacl` + `systemctl`), ma `SystemCallFilter` stretto, `CapabilityBoundingSet` minimo (solo `CAP_CHOWN`, `CAP_FOWNER`, `CAP_DAC_OVERRIDE` se servono).
+- [ ] **T1.7** Client del sidecar nel bridge + tool MCP `create_project`, `remove_project`, `set_write_enabled` che inoltrano.
+
+### Fase 2 — UX, safety net, test
+
+- [ ] **T2.1** Two-phase confirm: `propose_project` ritorna `confirmation_token` + diff testuale del config; `create_project` lo richiede. Evita create accidentali in catene LLM lunghe.
+- [ ] **T2.2** Soft-limit: max N progetti registrabili via sidecar (default 30) — guardia anti-loop esauri-ACL/inode.
+- [ ] **T2.3** Test integrazione: fake sidecar in-process, full flow con rollback se `install.sh` interno fallisce a metà.
+- [ ] **T2.4** Documentare in `FAILURES.md` le opzioni scartate per la registrazione (setuid wrapper su `install.sh`, sudoers `NOPASSWD` sull'installer completo, dare write al bridge su `/etc/`).
+
+### Decisioni aperte da fissare prima di scrivere codice
+
+1. **Solo Fase 0, o si va dritti a Fase 1?** Fase 0 ≈ 2 giornate, sblocca subito. Fase 1 ≈ 1-2 settimane con review attenta del threat model.
+2. **Estrazione zip lato bridge o lato sidecar?** Preferenza: lato bridge (meno codice in root). Richiede staging area `/var/lib/devbox-bridge/staging/` rw per il bridge — al momento ha solo `/var/log/devbox-bridge`.
+3. **Origine archivio**: solo upload base64 via tool, o anche pull da URL? Il secondo apre superficie SSRF da contenere (URL allowlist, blocco loopback/RFC1918).
+4. **Default `write_enabled` per progetti registrati via MCP**: `false` (più sicuro, richiede secondo step esplicito) o `true` (UX migliore, rischio più alto)?
+
+---
+
 ## Lessons learned (da accumulare strada facendo)
 
 Spazio per nota personale: cosa stai imparando facendo questo progetto, che potrai riusare altrove.
