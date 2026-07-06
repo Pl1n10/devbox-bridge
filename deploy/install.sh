@@ -46,7 +46,10 @@ readonly SVC_HOME="/opt/devbox-bridge"
 readonly CONFIG_DIR="/etc/devbox-bridge"
 readonly CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 readonly TOKEN_HASH_FILE="${CONFIG_DIR}/token.sha256"
+readonly BOOTSTRAP_KEY_FILE="${CONFIG_DIR}/bootstrap.key"
 readonly LOG_DIR="/var/log/devbox-bridge"
+readonly STATE_DIR="/var/lib/devbox-bridge"
+readonly STAGING_DIR="${STATE_DIR}/staging"
 readonly UNIT_NAME="devbox-bridge.service"
 readonly UNIT_DEST="/etc/systemd/system/${UNIT_NAME}"
 readonly DROPIN_DIR="/etc/systemd/system/${UNIT_NAME}.d"
@@ -73,10 +76,12 @@ fail() { printf '\033[1;31m[install]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- 2. Apt deps ----------------------------------------------------------
 
-log "verifico/installo pacchetti host (acl, python3-yaml, ripgrep)"
+log "verifico/installo pacchetti host (acl, python3-yaml, python3-ruamel.yaml, ripgrep)"
 DEBIAN_FRONTEND=noninteractive apt-get update -qq
+# python3-ruamel.yaml serve a register-project.sh per round-trippare i
+# commenti del config.yaml durante il merge (PyYAML li perderebbe).
 DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-recommends \
-    acl python3-yaml ripgrep > /dev/null
+    acl python3-yaml python3-ruamel.yaml ripgrep > /dev/null
 
 # --- 3. Service user ------------------------------------------------------
 
@@ -106,6 +111,11 @@ install -d -m 0750 -o root          -g "${SVC_GROUP}" "${CONFIG_DIR}"
 install -d -m 0750 -o "${SVC_USER}" -g "${SVC_GROUP}" "${LOG_DIR}"
 # /opt/devbox-bridge: owner SVC, 0750 → bridge ci farà clone + venv
 install -d -m 0750 -o "${SVC_USER}" -g "${SVC_GROUP}" "${SVC_HOME}"
+# /var/lib/devbox-bridge: state dir owner root:SVC 0750 (bridge legge metadati di sistema)
+install -d -m 0750 -o root          -g "${SVC_GROUP}" "${STATE_DIR}"
+# /var/lib/devbox-bridge/staging: owner SVC, 0750 — il bridge ci deposita
+# i bundle per register-project.sh (Fase 0 bootstrap progetti)
+install -d -m 0750 -o "${SVC_USER}" -g "${SVC_GROUP}" "${STAGING_DIR}"
 
 # --- 6. Copia config.yaml.example SE MANCA (no overwrite) -----------------
 
@@ -244,6 +254,26 @@ non è recuperabile. Se lo perdi: rm ${TOKEN_HASH_FILE} && rilancia $0.
 TOKEOF
 else
     log "token esistente, non rigenero: ${TOKEN_HASH_FILE}"
+fi
+
+# --- 10b. Bootstrap HMAC key: genera SE manca ----------------------------
+#
+# La chiave è usata da `deploy/register-project.sh` per verificare l'HMAC
+# del manifest emesso dal bridge. È root:SVC 0640 — leggibile dal bridge
+# (per firmare) e da root (per verificare), non scrivibile dal bridge.
+#
+# Distinta dal bearer token: anche se il token leakasse altrove, la
+# bootstrap key resterebbe usabile solo dal bridge process per emettere
+# manifest validi, e questo è il design (least privilege per scopo).
+
+if [[ ! -f "${BOOTSTRAP_KEY_FILE}" ]]; then
+    log "genero bootstrap.key per HMAC dei manifest (register-project.sh)"
+    umask 077
+    openssl rand -hex 32 > "${BOOTSTRAP_KEY_FILE}"
+    chown root:"${SVC_GROUP}" "${BOOTSTRAP_KEY_FILE}"
+    chmod 0640 "${BOOTSTRAP_KEY_FILE}"
+else
+    log "bootstrap.key esistente, non rigenero: ${BOOTSTRAP_KEY_FILE}"
 fi
 
 # --- 11. Installa unit + daemon-reload -----------------------------------

@@ -1,6 +1,6 @@
 # TOOLS — Reference dei tool MCP
 
-Reference completo dei 21 tool registrati dal server FastMCP. Per il threat
+Reference completo dei 27 tool registrati dal server FastMCP. Per il threat
 model e l'audit log vedi [`SECURITY.md`](SECURITY.md); per il deploy vedi
 [`SETUP.md`](SETUP.md).
 
@@ -579,6 +579,88 @@ restituisce solo metadati pubblici, no log content.
   esporrebbe anche `/var/log/syslog` ecc.). Vedi `SECURITY.md` e
   `HANDOFF.md` "Permessi journal".
 
+## Notes (6 tool)
+
+Implementazione: `src/devbox_bridge/tools/notes.py` (step 13). Espongono il
+vault markdown di Mnemosyne (working copy git di `~/notes`, origin sul
+Gitea della VM `mnemosyne`). Spec e vincoli: repo mnemosyne,
+`notes-module/SPEC-step13-notes.md` + ADR-008/009; lato bridge vedi
+`DECISIONS.md` D-013.
+
+Config via env (NON via `config.yaml` — il vault non è un "project"):
+
+- `NOTES_ROOT` (default `~/notes`)
+- `NOTES_WRITE_DIRS` (default `llm,inbox`)
+- `NOTES_MAX_READ_BYTES` (default `1048576`)
+
+In produzione le env vivono nel drop-in systemd `notes.conf` generato da
+`deploy/setup-notes-access.sh` (che prepara anche ACL, deploy key SSH e
+gitconfig del service user).
+
+Invarianti comuni: containment nel `NOTES_ROOT` via `resolve_within`;
+scrittura SOLO sotto le `NOTES_WRITE_DIRS`; `git pull --rebase --autostash`
+prima di ogni write (su conflitto: `rebase --abort` + rifiuto, il file non
+viene scritto); un commit per write; **mai** `--force`; **nessuna delete**
+(la fa Roberto da PC). Test: `tests/test_tools_notes.py` (34 test, fixture
+con bare origin locale — mai il vero vault).
+
+### `notes_list(subdir=None, glob="*.md")`
+
+Lista ricorsiva dei file del vault (default: tutti i `.md`), path relativi
+al root, ordinati, `.git/` escluso. Max `MAX_LIST_ENTRIES=500` voci.
+
+- Return: `{files, count, truncated}`.
+- Errori: `PathSecurityError` su `subdir` fuori root → `denied`.
+
+### `notes_read(path)`
+
+Contenuto di un file `.md` del vault (lettura ovunque, anche fuori dalle
+write dirs). Limite `max_read_bytes` (default 1 MB).
+
+- Return: `{path, bytes, content}`.
+- Errori: `PathSecurityError` → `denied`; `NotesFileError` (non-`.md`,
+  file mancante) → `error`; `FileTooLargeError` → `error`.
+
+### `notes_search(query, subdir=None)`
+
+Grep case-insensitive (substring, non regex) su tutti i `.md`. Ritorna
+righe `path:linea:testo`, max `MAX_SEARCH_LINES=200`. I symlink non
+vengono mai letti (possono uscire dal vault).
+
+- Return: `{query, matches, truncated}`.
+- Errori: `ValueError` su query vuota → `error`; `PathSecurityError` →
+  `denied`.
+
+### `notes_write(path, content, mode="create")`
+
+Scrive una nota e la sincronizza: check conflitti → `pull --rebase
+--autostash` → write → `git add` + commit `notes(mcp): <mode> <rel>` →
+push `HEAD:<branch>`. `mode`: `create` (fallisce se esiste), `overwrite`,
+`append`. Solo `.md`, solo sotto `NOTES_WRITE_DIRS`, subdir intermedie
+create al volo.
+
+- Return: `{path, mode, commit, pushed}`.
+- Errori: `WriteNotAllowedError` (fuori whitelist) → `denied`;
+  `PathSecurityError` → `denied`; `NotesFileError` (non-`.md`, `create` su
+  esistente) → `error`; `NotesSyncError` (pull/push falliti, conflitto —
+  il working tree viene riportato pulito e il file NON scritto) → `error`;
+  `ValueError` su mode sconosciuto → `error`.
+
+### `notes_sync_pull()`
+
+`git pull --rebase --autostash` esplicito. Su conflitto: `rebase --abort`
++ `NotesSyncError`.
+
+- Return: `{updated, head}`.
+
+### `notes_sync_status()`
+
+`git fetch` best-effort (origin offline non è un errore) + porcelain v1
+`-b -z` (riusa `_parse_porcelain_v1` di `tools/git.py`).
+
+- Return: `{branch, detached, upstream, ahead, behind, staged, unstaged,
+  untracked, clean}`.
+
 ## Mappa errori → event/outcome (riepilogo)
 
 Mappatura applicata da `server._event_for_tool` /
@@ -603,6 +685,8 @@ indicato.
 | `LinesOutOfRangeError`             | `tool.<name>`          | `error`  |
 | `FilterPatternError`               | `tool.list_systemd...` | `error`  |
 | `*NotAvailableError` (binari)      | `tool.<name>`          | `error`  |
+| `NotesFileError`                   | `tool.notes_*`         | `error`  |
+| `NotesSyncError`                   | `tool.notes_*`         | `error`  |
 | success                            | `tool.<name>`          | `success`|
 
 `outcome="denied"` e `"error"` sono **sempre** auditati, anche per i

@@ -3,13 +3,13 @@
 MCP server custom che gira sulla devbox e si espone via Cloudflare
 Tunnel come custom connector su claude.ai.
 
-Espone **21 tool sicuri** su filesystem, git, esecuzione test/lint/build
-e introspezione di sistema (info host, log, journalctl), con auth
-bearer + rate limit + audit log.
+Espone **27 tool sicuri** su filesystem, git, esecuzione test/lint/build,
+introspezione di sistema (info host, log, journalctl) e vault di note
+markdown (Mnemosyne), con auth bearer + rate limit + audit log.
 
-> Status: **MVP completato (step 1-12)**. Server FastMCP HTTP `/mcp`
-> con 21 tool registrati, auth+rate limit, audit log strutturato,
-> deploy hardened (systemd + ACL chirurgiche). Suite: 364 test verdi.
+> Status: **step 1-13 completati**. Server FastMCP HTTP `/mcp`
+> con 27 tool registrati, auth+rate limit, audit log strutturato,
+> deploy hardened (systemd + ACL chirurgiche). Suite: 400 test verdi.
 
 ## Tool esposti
 
@@ -20,6 +20,14 @@ bearer + rate limit + audit log.
 - **Esecuzione (4):** `run_command`, `run_tests`, `run_lint`, `run_build`.
 - **Sistema (4, read-only):** `get_system_info`, `list_systemd_services`,
   `tail_log`, `read_journalctl`.
+- **Notes (6):** `notes_list`, `notes_read`, `notes_search`,
+  `notes_write`, `notes_sync_pull`, `notes_sync_status` — vault Mnemosyne
+  (`~/notes`, repo git con origin sul Gitea della VM `mnemosyne`).
+  Scrittura solo sotto `llm/` e `inbox/`, pull-prima-di-scrivere, un
+  commit per nota, mai force-push, nessuna delete. Config via env:
+  `NOTES_ROOT`, `NOTES_WRITE_DIRS`, `NOTES_MAX_READ_BYTES`. Setup
+  produzione: `deploy/setup-notes-access.sh` (ACL, deploy key, drop-in
+  systemd).
 
 Reference completo: [`docs/TOOLS.md`](docs/TOOLS.md).
 
@@ -69,6 +77,7 @@ docs/                 # SETUP / SECURITY / TOOLS / brief originale
 | 10 | `tools/system.py` | ✅ |
 | 11 | `deploy/*` (systemd + ACL + cloudflared) | ✅ |
 | 12 | Documentazione finale | ✅ |
+| 13 | `tools/notes.py` (vault Mnemosyne) | ✅ |
 
 ## Deploy
 

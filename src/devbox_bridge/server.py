@@ -23,6 +23,7 @@ from devbox_bridge.security.commands import CommandRejectedError
 from devbox_bridge.security.paths import PathSecurityError
 from devbox_bridge.tools import execution, filesystem, system
 from devbox_bridge.tools import git as git_tools
+from devbox_bridge.tools import notes as notes_tools
 from devbox_bridge.tools.execution import DEFAULT_RUN_COMMAND_TIMEOUT_SECONDS
 from devbox_bridge.tools.filesystem import GlobSecurityError, WriteNotAllowedError
 from devbox_bridge.tools.git import PushNotAllowedError
@@ -39,9 +40,7 @@ RETRY_AFTER_SECONDS = "60"
 
 # Tool exec — usati per popolare outcome_detail e per la sintesi audit di
 # stdout/stderr. Tenuto qui (non in tools/execution.py) perché è policy server.
-EXEC_TOOL_NAMES: frozenset[str] = frozenset(
-    {"run_command", "run_tests", "run_lint", "run_build"}
-)
+EXEC_TOOL_NAMES: frozenset[str] = frozenset({"run_command", "run_tests", "run_lint", "run_build"})
 
 # Truncate del campo `command` in args_summary audit. Protezione log poisoning:
 # `run_command(... command="echo " + "A"*100000)` non deve generare 100KB di "A"
@@ -197,9 +196,7 @@ def _summarize_tool_args(
     if "command" in summary:
         cmd = str(summary["command"])
         if len(cmd) > COMMAND_AUDIT_TRUNCATE_CHARS:
-            summary["command"] = (
-                cmd[:COMMAND_AUDIT_TRUNCATE_CHARS] + "...[truncated]"
-            )
+            summary["command"] = cmd[:COMMAND_AUDIT_TRUNCATE_CHARS] + "...[truncated]"
     if result is not None and isinstance(result, dict):
         for key in ("bytes", "content_sha8", "created", "occurrences_replaced"):
             if key in result:
@@ -264,9 +261,14 @@ def _call_with_audit(
     return result
 
 
-def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
+def create_mcp(
+    config: AppConfig,
+    audit: AuditLogger | None = None,
+    notes_config: notes_tools.NotesConfig | None = None,
+) -> FastMCP:
     """Build FastMCP app and register implemented filesystem tools."""
     audit_logger = audit or AuditLogger(config.audit, config.server)
+    notes_cfg = notes_config or notes_tools.NotesConfig.from_env()
     mcp = FastMCP("devbox-bridge")
 
     @mcp.tool()
@@ -399,9 +401,7 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
                 "git_diff",
                 project,
                 {"project": project, "staged": staged, "path": path},
-                lambda: git_tools.git_diff(
-                    config, project, staged=staged, path=path
-                ),
+                lambda: git_tools.git_diff(config, project, staged=staged, path=path),
             ),
         )
 
@@ -487,9 +487,7 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
                 "run_command",
                 project,
                 {"project": project, "command": command, "timeout": timeout},
-                lambda: execution.run_command(
-                    config, project, command, timeout=timeout
-                ),
+                lambda: execution.run_command(config, project, command, timeout=timeout),
             ),
         )
 
@@ -574,9 +572,7 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
         )
 
     @mcp.tool()
-    async def read_journalctl(
-        unit: str, lines: int = DEFAULT_LOG_LINES
-    ) -> dict[str, Any]:
+    async def read_journalctl(unit: str, lines: int = DEFAULT_LOG_LINES) -> dict[str, Any]:
         return cast(
             dict[str, Any],
             _call_with_audit(
@@ -585,6 +581,94 @@ def create_mcp(config: AppConfig, audit: AuditLogger | None = None) -> FastMCP:
                 None,
                 {"unit": unit, "lines": lines},
                 lambda: system.read_journalctl(config, unit, lines=lines),
+            ),
+        )
+
+    @mcp.tool()
+    async def notes_list(
+        subdir: str | None = None,
+        glob: str = "*.md",
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "notes_list",
+                None,
+                {"subdir": subdir, "glob": glob},
+                lambda: notes_tools.notes_list(notes_cfg, subdir=subdir, glob=glob),
+            ),
+        )
+
+    @mcp.tool()
+    async def notes_read(path: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "notes_read",
+                None,
+                {"path": path},
+                lambda: notes_tools.notes_read(notes_cfg, path),
+            ),
+        )
+
+    @mcp.tool()
+    async def notes_search(
+        query: str,
+        subdir: str | None = None,
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "notes_search",
+                None,
+                {"query": query, "subdir": subdir},
+                lambda: notes_tools.notes_search(notes_cfg, query, subdir=subdir),
+            ),
+        )
+
+    @mcp.tool()
+    async def notes_write(
+        path: str,
+        content: str,
+        mode: str = "create",
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "notes_write",
+                None,
+                {"path": path, "content": content, "mode": mode},
+                lambda: notes_tools.notes_write(notes_cfg, path, content, mode=mode),
+            ),
+        )
+
+    @mcp.tool()
+    async def notes_sync_pull() -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "notes_sync_pull",
+                None,
+                {},
+                lambda: notes_tools.notes_sync_pull(notes_cfg),
+            ),
+        )
+
+    @mcp.tool()
+    async def notes_sync_status() -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _call_with_audit(
+                audit_logger,
+                "notes_sync_status",
+                None,
+                {},
+                lambda: notes_tools.notes_sync_status(notes_cfg),
             ),
         )
 
