@@ -28,9 +28,7 @@ from devbox_bridge.tools.notes import (
 
 
 def _run(cwd: Path, *cmd: str) -> str:
-    proc = subprocess.run(
-        list(cmd), cwd=cwd, check=True, capture_output=True, text=True
-    )
+    proc = subprocess.run(list(cmd), cwd=cwd, check=True, capture_output=True, text=True)
     return proc.stdout
 
 
@@ -50,9 +48,7 @@ def vault(tmp_path: Path) -> tuple[Path, Path]:
         (root / sub).mkdir(parents=True)
         (root / sub / "INDEX.md").write_text(f"# {sub}\n", encoding="utf-8")
     (root / "INDEX.md").write_text("# vault\n", encoding="utf-8")
-    (root / "work" / "note1.md").write_text(
-        "# Nota\n\nHello WORLD di prova.\n", encoding="utf-8"
-    )
+    (root / "work" / "note1.md").write_text("# Nota\n\nHello WORLD di prova.\n", encoding="utf-8")
 
     _run(root, "git", "init", "-b", "main")
     _run(root, "git", "config", "user.email", "test@example.com")
@@ -177,7 +173,8 @@ class TestContainment:
     def test_write_outside_whitelist_rejected(self, cfg: NotesConfig) -> None:
         with pytest.raises(WriteNotAllowedError) as exc:
             notes.notes_write(cfg, "ops/x.md", "no", mode="create")
-        assert "llm" in str(exc.value) and "inbox" in str(exc.value)
+        assert "llm" in str(exc.value)
+        assert "inbox" in str(exc.value)
         assert not (cfg.root / "ops" / "x.md").exists()
 
         with pytest.raises(WriteNotAllowedError):
@@ -188,9 +185,7 @@ class TestContainment:
         with pytest.raises((PathSecurityError, WriteNotAllowedError)):
             notes.notes_write(cfg, "llm/../../evil.md", "no", mode="create")
 
-    def test_write_inside_llm_ok(
-        self, cfg: NotesConfig, vault: tuple[Path, Path]
-    ) -> None:
+    def test_write_inside_llm_ok(self, cfg: NotesConfig, vault: tuple[Path, Path]) -> None:
         root, bare = vault
         out = notes.notes_write(cfg, "llm/idea.md", "# Idea\n", mode="create")
         assert (root / "llm" / "idea.md").read_text(encoding="utf-8") == "# Idea\n"
@@ -198,17 +193,13 @@ class TestContainment:
         assert out["pushed"] is True
         assert _bare_has_file(bare, "llm/idea.md")
 
-    def test_write_inside_inbox_ok(
-        self, cfg: NotesConfig, vault: tuple[Path, Path]
-    ) -> None:
+    def test_write_inside_inbox_ok(self, cfg: NotesConfig, vault: tuple[Path, Path]) -> None:
         root, bare = vault
         notes.notes_write(cfg, "inbox/todo.md", "- [ ] x\n", mode="create")
         assert (root / "inbox" / "todo.md").exists()
         assert _bare_has_file(bare, "inbox/todo.md")
 
-    def test_write_nested_subdir_created(
-        self, cfg: NotesConfig, vault: tuple[Path, Path]
-    ) -> None:
+    def test_write_nested_subdir_created(self, cfg: NotesConfig, vault: tuple[Path, Path]) -> None:
         root, _ = vault
         notes.notes_write(cfg, "llm/2026/07/log.md", "x\n", mode="create")
         assert (root / "llm" / "2026" / "07" / "log.md").exists()
@@ -229,9 +220,7 @@ class TestWriteSemantics:
         notes.notes_write(cfg, "llm/a.md", "v2\n", mode="overwrite")
         assert (cfg.root / "llm" / "a.md").read_text(encoding="utf-8") == "v2\n"
         notes.notes_write(cfg, "llm/a.md", "more\n", mode="append")
-        assert (
-            cfg.root / "llm" / "a.md"
-        ).read_text(encoding="utf-8") == "v2\nmore\n"
+        assert (cfg.root / "llm" / "a.md").read_text(encoding="utf-8") == "v2\nmore\n"
 
     def test_invalid_mode_rejected(self, cfg: NotesConfig) -> None:
         with pytest.raises(ValueError):
@@ -242,18 +231,14 @@ class TestWriteSemantics:
             notes.notes_write(cfg, "inbox/script.sh", "#!/bin/sh\n", mode="create")
         assert not (cfg.root / "inbox" / "script.sh").exists()
 
-    def test_commit_message_format(
-        self, cfg: NotesConfig, vault: tuple[Path, Path]
-    ) -> None:
+    def test_commit_message_format(self, cfg: NotesConfig, vault: tuple[Path, Path]) -> None:
         root, _ = vault
         notes.notes_write(cfg, "llm/b.md", "x\n", mode="create")
         assert _last_commit_subject(root) == "notes(mcp): create llm/b.md"
         notes.notes_write(cfg, "llm/b.md", "y\n", mode="overwrite")
         assert _last_commit_subject(root) == "notes(mcp): overwrite llm/b.md"
 
-    def test_one_commit_per_write(
-        self, cfg: NotesConfig, vault: tuple[Path, Path]
-    ) -> None:
+    def test_one_commit_per_write(self, cfg: NotesConfig, vault: tuple[Path, Path]) -> None:
         root, _ = vault
         before = _commit_count(root)
         notes.notes_write(cfg, "llm/c1.md", "x\n", mode="create")
@@ -291,9 +276,7 @@ class TestSync:
         assert "commit" in subcommands
         assert subcommands.index("pull") < subcommands.index("commit")
 
-    def test_pull_merges_remote_changes(
-        self, cfg: NotesConfig, second_clone: Path
-    ) -> None:
+    def test_pull_merges_remote_changes(self, cfg: NotesConfig, second_clone: Path) -> None:
         (second_clone / "work" / "dal-pc.md").write_text("pc\n", encoding="utf-8")
         _run(second_clone, "git", "add", "work/dal-pc.md")
         _run(second_clone, "git", "commit", "-m", "nota dal pc")
@@ -375,9 +358,7 @@ class TestReadListSearch:
         out = notes.notes_list(cfg, subdir="work", glob="note*.md")
         assert out["files"] == ["work/note1.md"]
 
-    def test_list_respects_limit(
-        self, cfg: NotesConfig, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_list_respects_limit(self, cfg: NotesConfig, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(notes, "MAX_LIST_ENTRIES", 2)
         out = notes.notes_list(cfg)
         assert len(out["files"]) == 2
@@ -406,9 +387,7 @@ class TestReadListSearch:
 
     def test_search_case_insensitive_and_line_numbers(self, cfg: NotesConfig) -> None:
         out = notes.notes_search(cfg, "hello world")
-        assert any(
-            m.startswith("work/note1.md:3:") for m in out["matches"]
-        ), out["matches"]
+        assert any(m.startswith("work/note1.md:3:") for m in out["matches"]), out["matches"]
 
     def test_search_respects_subdir_and_limit(
         self, cfg: NotesConfig, monkeypatch: pytest.MonkeyPatch
@@ -417,9 +396,7 @@ class TestReadListSearch:
         assert out["matches"] == []
 
         monkeypatch.setattr(notes, "MAX_SEARCH_LINES", 1)
-        (cfg.root / "work" / "multi.md").write_text(
-            "match uno\nmatch due\n", encoding="utf-8"
-        )
+        (cfg.root / "work" / "multi.md").write_text("match uno\nmatch due\n", encoding="utf-8")
         out = notes.notes_search(cfg, "match")
         assert len(out["matches"]) == 1
         assert out["truncated"] is True
